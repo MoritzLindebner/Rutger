@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
+  <title>Hit The Road Jack</title>
+  <link rel="stylesheet" href="style.css" />
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/howler/2.2.4/howler.min.js"></script>
+</head>
+<body>
+  <div id="game-container">
+    <canvas id="game-canvas"></canvas>
+
+    <!-- Loading Screen -->
+    <div id="loading-screen" class="screen">
+      <h1 class="screen-title accent">HIT THE ROAD JACK</h1>
+      <div id="loading-bar-wrap">
+        <div id="loading-bar"></div>
+      </div>
+      <p id="loading-label" class="hint">Wird geladen...</p>
+    </div>
+
+    <!-- Menu Screen -->
+    <div id="menu-screen" class="screen hidden">
+      <div class="menu-logo">
+        <h1 class="screen-title">HIT THE</h1>
+        <h1 class="screen-title accent">ROAD JACK</h1>
+      </div>
+      <div class="char-preview">
+        <div id="preview-susi" class="preview-char"></div>
+        <div id="preview-rutger" class="preview-char"></div>
+      </div>
+      <p class="screen-subtitle">Entkommt der Polizei.<br>Weicht dem Verkehr aus.</p>
+      <button id="btn-start" class="btn-primary">LOSFAHREN</button>
+      <p class="hint">← → oder Swipe zum Lenken</p>
+    </div>
+
+    <!-- Game Over Screen -->
+    <div id="gameover-screen" class="screen hidden">
+      <h1 class="screen-title red">CRASH!</h1>
+      <div id="score-result">
+        <p class="result-label">PUNKTE</p>
+        <p id="final-score" class="result-value">0</p>
+      </div>
+      <div id="highscore-result">
+        <p class="result-label">REKORD</p>
+        <p id="final-highscore" class="result-value">0</p>
+      </div>
+      <p id="new-record-badge" class="new-record hidden">NEUER REKORD!</p>
+      <button id="btn-retry" class="btn-primary">NOCHMAL</button>
+    </div>
+
+    <!-- HUD -->
+    <div id="hud" class="hidden">
+      <div id="hud-top">
+        <div id="hud-score">
+          <span id="score-value">0</span>
+        </div>
+        <div id="hud-highscore">
+          <span class="hud-label">BEST</span>
+          <span id="highscore-value">0</span>
+        </div>
+      </div>
+      <div id="hud-effects">
+        <span id="multiplier-badge" class="effect-badge hidden"></span>
+        <span id="star-badge" class="effect-badge star hidden">🪩 UNBESIEGBAR</span>
+        <span id="joint-badge" class="effect-badge joint hidden">🌿 HIGH</span>
+      </div>
+    </div>
+  </div>
+
+  <script type="module" src="audio.js"></script>
+  <script type="module" src="road.js"></script>
+  <script type="module" src="car.js"></script>
+  <script type="module" src="items.js"></script>
+  <script type="module" src="ui.js"></script>
+  <script type="module" src="game.js"></script>
+</body>
+</html>

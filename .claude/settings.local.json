@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(mkdir -p \"C:/Users/Moritz/Development/Rutger/assets/sprites\" \"C:/Users/Moritz/Development/Rutger/assets/audio\" \"C:/Users/Moritz/Development/Rutger/assets/maps\")",
+      "Bash(touch \"C:/Users/Moritz/Development/Rutger/assets/sprites/.gitkeep\" \"C:/Users/Moritz/Development/Rutger/assets/audio/.gitkeep\" \"C:/Users/Moritz/Development/Rutger/assets/maps/.gitkeep\")"
+    ]
+  }
+}
