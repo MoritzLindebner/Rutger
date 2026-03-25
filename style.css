@@ -8,8 +8,9 @@ body {
   background: #050510;
   display: flex;
   justify-content: center;
-  align-items: center;
+  align-items: flex-start;
   min-height: 100vh;
+  min-height: 100dvh;
   overflow: hidden;
   font-family: 'Courier New', Courier, monospace;
   color: #fff;
@@ -18,14 +19,14 @@ body {
 
 #game-container {
   position: relative;
-  width: 480px;
+  width: 600px;
   height: 800px;
   transform-origin: top center;
 }
 
 #game-canvas {
   display: block;
-  width: 480px;
+  width: 600px;
   height: 800px;
   background: #050510;
   image-rendering: pixelated;

@@ -2,7 +2,7 @@
 
 import { CANVAS_H, LANE_COUNT, laneCenterX } from './road.js';
 
-const ITEM_SIZE = 64;
+const ITEM_SIZE = 80;
 
 const SPAWN_WEIGHTS = [
   { type: 'x2',    weight: 40 },
@@ -32,10 +32,11 @@ const SPRITES = {
 };
 
 function removeWhiteBg(img) {
+  // BG-Removal auf voller Auflösung für beste Qualität
   const oc = document.createElement('canvas');
   oc.width  = img.naturalWidth  || img.width;
   oc.height = img.naturalHeight || img.height;
-  if (!oc.width) return img; // noch nicht geladen
+  if (!oc.width) return img;
   const octx = oc.getContext('2d');
   octx.drawImage(img, 0, 0);
   const d = octx.getImageData(0, 0, oc.width, oc.height);
@@ -58,7 +59,15 @@ function removeWhiteBg(img) {
     queue.push(qx+1, qy, qx-1, qy, qx, qy+1, qx, qy-1);
   }
   octx.putImageData(d, 0, 0);
-  return oc;
+  // Smooth downscale auf Zielgröße
+  const sc = document.createElement('canvas');
+  sc.width  = ITEM_SIZE;
+  sc.height = ITEM_SIZE;
+  const sctx = sc.getContext('2d');
+  sctx.imageSmoothingEnabled = true;
+  sctx.imageSmoothingQuality = 'high';
+  sctx.drawImage(oc, 0, 0, ITEM_SIZE, ITEM_SIZE);
+  return sc;
 }
 
 // Gecachte verarbeitete Sprites

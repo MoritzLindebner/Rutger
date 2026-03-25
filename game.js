@@ -244,10 +244,14 @@ function gameLoop(timestamp) {
 // ── Responsive Scaling ───────────────────────────────────────────────────────
 function scaleGame() {
   const container = document.getElementById('game-container');
-  const scaleX = window.innerWidth  / CANVAS_W;
-  const scaleY = window.innerHeight / CANVAS_H;
+  const vh = window.innerHeight;
+  const vw = window.innerWidth;
+  const scaleX = vw / CANVAS_W;
+  const scaleY = vh / CANVAS_H;
   const scale  = Math.min(scaleX, scaleY);
-  container.style.transform = `scale(${scale})`;
+  const scaledH = CANVAS_H * scale;
+  const offsetY = Math.max(0, (vh - scaledH) / 2);
+  container.style.transform = `translate(0, ${offsetY}px) scale(${scale})`;
 }
 
 // ── Preloader ─────────────────────────────────────────────────────────────────
@@ -256,6 +260,12 @@ const PRELOAD_ASSETS = [
   'assets/sprites/cabrio-smoken.png',
   'assets/sprites/joint.png',
   'assets/sprites/diskokugel.png',
+  'assets/sprites/traffic-blue.png',
+  'assets/sprites/traffic-red.png',
+  'assets/sprites/traffic-orange.png',
+  'assets/sprites/traffic-taxi.png',
+  'assets/sprites/traffic-firetruck.png',
+  'assets/sprites/traffic-pickup.png',
 ];
 
 function preloadAssets(onDone) {

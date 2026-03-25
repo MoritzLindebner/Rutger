@@ -32,40 +32,10 @@ export class PlayerCar {
   _loadAndProcess(src) {
     const holder = { img: null };
     const image  = new Image();
-    image.onload = () => { holder.img = this._removeBg(image); };
+    image.onload = () => { holder.img = _removeBgHQ(image, CAR_W, CAR_H); };
     image.onerror = () => console.warn(`[Car] Sprite nicht gefunden: ${src}`);
     image.src = src;
     return holder;
-  }
-
-  _removeBg(img) {
-    const oc   = document.createElement('canvas');
-    oc.width   = img.width;
-    oc.height  = img.height;
-    const octx = oc.getContext('2d');
-    octx.drawImage(img, 0, 0);
-    const id = octx.getImageData(0, 0, oc.width, oc.height);
-    const d  = id.data;
-    const w  = oc.width, h = oc.height;
-    const visited = new Uint8Array(w * h);
-    const queue   = [];
-    const isWhite = i => d[i] > 220 && d[i+1] > 220 && d[i+2] > 220;
-    for (let x = 0; x < w; x++) { queue.push(x, 0); queue.push(x, h-1); }
-    for (let y = 0; y < h; y++) { queue.push(0, y); queue.push(w-1, y); }
-    let qi = 0;
-    while (qi < queue.length) {
-      const px = queue[qi++], py = queue[qi++];
-      if (px < 0 || py < 0 || px >= w || py >= h) continue;
-      const idx = py * w + px;
-      if (visited[idx]) continue;
-      visited[idx] = 1;
-      const di = idx * 4;
-      if (!isWhite(di)) continue;
-      d[di + 3] = 0;
-      queue.push(px+1, py, px-1, py, px, py+1, px, py-1);
-    }
-    octx.putImageData(id, 0, 0);
-    return oc;
   }
 
   get hitboxX() { return this.x + (CAR_W - HITBOX_W) / 2; }
@@ -150,68 +120,117 @@ export class PlayerCar {
 
     ctx.restore();
   }
-
-  _renderPlaceholder(ctx, y) {
-    const wobX = this.highEffect ? Math.sin(this.wobble) * 4 : 0;
-
-    // Karosserie (Cabrio – offen oben)
-    ctx.fillStyle = '#cc2244';
-    ctx.fillRect(this.x + wobX, y + 20, CAR_W, CAR_H - 20);
-
-    // Windschutzscheibe
-    ctx.fillStyle = '#aaddff55';
-    ctx.fillRect(this.x + wobX + 8, y + 22, CAR_W - 16, 20);
-
-    // Motorhaube
-    ctx.fillStyle = '#aa1133';
-    ctx.fillRect(this.x + wobX + 4, y, CAR_W - 8, 22);
-
-    // Räder
-    ctx.fillStyle = '#111';
-    ctx.fillRect(this.x + wobX - 5, y + 25,  10, 18);
-    ctx.fillRect(this.x + wobX + CAR_W - 5, y + 25, 10, 18);
-    ctx.fillRect(this.x + wobX - 5, y + CAR_H - 28, 10, 18);
-    ctx.fillRect(this.x + wobX + CAR_W - 5, y + CAR_H - 28, 10, 18);
-
-    // Susi (Fahrerin, links)
-    ctx.fillStyle = '#ff69b4';
-    ctx.fillRect(this.x + wobX + 8,  y + 28, 22, 26);
-    ctx.fillStyle = '#ffe0a0';
-    ctx.fillRect(this.x + wobX + 12, y + 20, 14, 14);
-
-    // Rutger (Beifahrer, rechts)
-    ctx.fillStyle = '#4a9eff';
-    ctx.fillRect(this.x + wobX + CAR_W - 30, y + 28, 22, 26);
-    ctx.fillStyle = '#ffe0a0';
-    ctx.fillRect(this.x + wobX + CAR_W - 26, y + 20, 14, 14);
-
-    // Grillz (kleine goldene Zähne bei Rutger)
-    ctx.fillStyle = '#ffd700';
-    ctx.fillRect(this.x + wobX + CAR_W - 22, y + 31, 6, 2);
-  }
 }
 
-// ── Gegenverkehr ───────────────────────────────────────────────────────────
-const TRAFFIC_COLORS = ['#cc3333', '#dddddd', '#3366cc', '#ccaa00', '#229922', '#884499'];
+// ── Gegenverkehr (Sprite-basiert) ─────────────────────────────────────────
+const TRAFFIC_TYPES = [
+  { src: 'assets/sprites/traffic-blue.png',      w: 200, h: 310, hitW: 105 },
+  { src: 'assets/sprites/traffic-red.png',       w: 200, h: 310, hitW: 105 },
+  { src: 'assets/sprites/traffic-orange.png',    w: 200, h: 310, hitW: 105 },
+  { src: 'assets/sprites/traffic-taxi.png',      w: 200, h: 310, hitW: 105 },
+  { src: 'assets/sprites/traffic-firetruck.png', w: 210, h: 330, hitW: 110 },
+  { src: 'assets/sprites/traffic-pickup.png',    w: 205, h: 320, hitW: 105 },
+];
+
+// Shared sprite cache – geladen einmal, geteilt zwischen allen Instanzen
+const _spriteCache = {};
+
+function _removeBgHQ(img, targetW, targetH) {
+  // BG-Removal auf voller Auflösung für beste Qualität
+  const oc   = document.createElement('canvas');
+  oc.width   = img.width;
+  oc.height  = img.height;
+  const octx = oc.getContext('2d');
+  octx.drawImage(img, 0, 0);
+  const id = octx.getImageData(0, 0, oc.width, oc.height);
+  const d  = id.data;
+  const w  = oc.width, h = oc.height;
+  const visited = new Uint8Array(w * h);
+  const queue   = [];
+  const isWhite = i => d[i] > 220 && d[i+1] > 220 && d[i+2] > 220;
+  for (let x = 0; x < w; x++) { queue.push(x, 0); queue.push(x, h-1); }
+  for (let y = 0; y < h; y++) { queue.push(0, y); queue.push(w-1, y); }
+  let qi = 0;
+  while (qi < queue.length) {
+    const px = queue[qi++], py = queue[qi++];
+    if (px < 0 || py < 0 || px >= w || py >= h) continue;
+    const idx = py * w + px;
+    if (visited[idx]) continue;
+    visited[idx] = 1;
+    const di = idx * 4;
+    if (!isWhite(di)) continue;
+    d[di + 3] = 0;
+    queue.push(px+1, py, px-1, py, px, py+1, px, py-1);
+  }
+  octx.putImageData(id, 0, 0);
+  // Smooth downscale auf Zielgröße
+  const sc   = document.createElement('canvas');
+  sc.width   = targetW;
+  sc.height  = targetH;
+  const sctx = sc.getContext('2d');
+  sctx.imageSmoothingEnabled = true;
+  sctx.imageSmoothingQuality = 'high';
+  sctx.drawImage(oc, 0, 0, targetW, targetH);
+  return sc;
+}
+
+function _removeBgAndScale(img, targetW, targetH) {
+  // 1) Erst auf kleine Arbeitsgröße skalieren (spart Flood-Fill-Arbeit)
+  const sc   = document.createElement('canvas');
+  sc.width   = targetW;
+  sc.height  = targetH;
+  const sctx = sc.getContext('2d');
+  sctx.imageSmoothingEnabled = false;
+  sctx.drawImage(img, 0, 0, targetW, targetH);
+
+  // 2) Flood-Fill auf der kleinen Version
+  const id = sctx.getImageData(0, 0, targetW, targetH);
+  const d  = id.data;
+  const w  = targetW, h = targetH;
+  const visited = new Uint8Array(w * h);
+  const queue   = [];
+  const isWhite = i => d[i] > 220 && d[i+1] > 220 && d[i+2] > 220;
+  for (let x = 0; x < w; x++) { queue.push(x, 0); queue.push(x, h-1); }
+  for (let y = 0; y < h; y++) { queue.push(0, y); queue.push(w-1, y); }
+  let qi = 0;
+  while (qi < queue.length) {
+    const px = queue[qi++], py = queue[qi++];
+    if (px < 0 || py < 0 || px >= w || py >= h) continue;
+    const idx = py * w + px;
+    if (visited[idx]) continue;
+    visited[idx] = 1;
+    const di = idx * 4;
+    if (!isWhite(di)) continue;
+    d[di + 3] = 0;
+    queue.push(px+1, py, px-1, py, px, py+1, px, py-1);
+  }
+  sctx.putImageData(id, 0, 0);
+  return sc;
+}
+
+function _getSprite(src, targetW, targetH) {
+  const key = src;
+  if (!_spriteCache[key]) {
+    const holder = { img: null };
+    const image  = new Image();
+    image.onload = () => { holder.img = _removeBgAndScale(image, targetW, targetH); };
+    image.src = src;
+    _spriteCache[key] = holder;
+  }
+  return _spriteCache[src];
+}
 
 export class TrafficCar {
-  constructor(lane, speed) {
-    this.lane  = lane;
-    this.w     = 60;
-    this.h     = 100;
-    this.x     = laneCenterX(lane) - this.w / 2;
-    this.y     = -this.h - 20;
-    this.speed = speed + (Math.random() - 0.5) * 40; // ±20px/s Variation
-    this.color = TRAFFIC_COLORS[Math.floor(Math.random() * TRAFFIC_COLORS.length)];
-    this.colorDark = this._darken(this.color);
-  }
-
-  _darken(hex) {
-    // Einfaches Abdunkeln für Dach/Details
-    const r = parseInt(hex.slice(1, 3), 16);
-    const g = parseInt(hex.slice(3, 5), 16);
-    const b = parseInt(hex.slice(5, 7), 16);
-    return `rgb(${Math.floor(r*0.6)},${Math.floor(g*0.6)},${Math.floor(b*0.6)})`;
+  constructor(lane, speed, typeIdx) {
+    const type = TRAFFIC_TYPES[typeIdx];
+    this.lane   = lane;
+    this.w      = type.w;
+    this.h      = type.h;
+    this.hitW   = type.hitW;
+    this.x      = laneCenterX(lane) - this.w / 2;
+    this.y      = -this.h - 20;
+    this.speed  = speed + (Math.random() - 0.5) * 40;
+    this.sprite = _getSprite(type.src, type.w, type.h);
   }
 
   update(dt) {
@@ -222,65 +241,46 @@ export class TrafficCar {
     return this.y > CANVAS_H + 20;
   }
 
-  /** AABB-Kollision mit Spieler-Hitbox */
   collidesWith(player) {
     const px = player.hitboxX;
     const py = player.hitboxY;
+    const tx = this.x + (this.w - this.hitW) / 2;
     return (
-      px < this.x + this.w &&
-      px + HITBOX_W > this.x &&
+      px < tx + this.hitW &&
+      px + HITBOX_W > tx &&
       py < this.y + this.h &&
       py + player.h > this.y
     );
   }
 
   render(ctx) {
-    const x = this.x;
-    const y = this.y;
-
-    // Karosserie
-    ctx.fillStyle = this.color;
-    ctx.fillRect(x, y + 15, this.w, this.h - 15);
-
-    // Dach
-    ctx.fillStyle = this.colorDark;
-    ctx.fillRect(x + 6, y, this.w - 12, 22);
-
-    // Heckscheibe (unten, weil Gegenverkehr)
-    ctx.fillStyle = '#aaddff44';
-    ctx.fillRect(x + 8, y + 17, this.w - 16, 14);
-
-    // Rücklichter
-    ctx.fillStyle = '#ff3300';
-    ctx.fillRect(x + 3,           y + this.h - 12, 10, 7);
-    ctx.fillRect(x + this.w - 13, y + this.h - 12, 10, 7);
-
-    // Räder
-    ctx.fillStyle = '#111';
-    ctx.fillRect(x - 5, y + 18, 9, 16);
-    ctx.fillRect(x + this.w - 4, y + 18, 9, 16);
-    ctx.fillRect(x - 5, y + this.h - 28, 9, 16);
-    ctx.fillRect(x + this.w - 4, y + this.h - 28, 9, 16);
+    ctx.imageSmoothingEnabled = false;
+    const spr = this.sprite?.img;
+    if (spr) {
+      ctx.drawImage(spr, this.x, this.y, this.w, this.h);
+    } else {
+      ctx.fillStyle = '#444';
+      ctx.fillRect(this.x, this.y, this.w, this.h);
+    }
   }
 }
 
 // ── Spawn-System ───────────────────────────────────────────────────────────
 export class TrafficSpawner {
   constructor() {
-    this.interval    = 1500;  // ms zwischen Spawns
-    this.minInterval = 500;
+    this.interval    = 2200;
+    this.minInterval = 800;
     this.timer       = 0;
     this.lastLane    = -1;
-    this.elapsed     = 0;    // Gesamtspielzeit für Eskalation
+    this.elapsed     = 0;
   }
 
   update(dt, speed) {
     this.timer   += dt;
     this.elapsed += dt;
 
-    // Alle 10s: Interval sinkt um 80ms
     const reduction = Math.floor(this.elapsed / 10_000) * 80;
-    this.interval = Math.max(this.minInterval, 1500 - reduction);
+    this.interval = Math.max(this.minInterval, 2200 - reduction);
 
     if (this.timer >= this.interval) {
       this.timer = 0;
@@ -295,6 +295,9 @@ export class TrafficSpawner {
       lane = Math.floor(Math.random() * LANE_COUNT);
     } while (lane === this.lastLane);
     this.lastLane = lane;
-    return new TrafficCar(lane, speed);
+
+    // Zufälliger Fahrzeugtyp, alle gleiche Wahrscheinlichkeit
+    const typeIdx = Math.floor(Math.random() * TRAFFIC_TYPES.length);
+    return new TrafficCar(lane, speed, typeIdx);
   }
 }

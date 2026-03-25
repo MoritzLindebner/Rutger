@@ -77,7 +77,7 @@ export const UI = {
     }
 
     // Joint
-    if (effects.isHigh) {
+    if (effects.isSmoking || effects.isBlurred) {
       this.els.jointBadge.classList.remove('hidden');
     } else {
       this.els.jointBadge.classList.add('hidden');
