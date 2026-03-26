@@ -5,6 +5,7 @@ import { Road, CANVAS_W, CANVAS_H } from './road.js';
 import { PlayerCar, TrafficCar, TrafficSpawner, PLAYER_Y } from './car.js';
 import { Item, ItemSpawner, EffectManager } from './items.js';
 import { UI } from './ui.js';
+import { initFirebase, getUsername, setUsername, submitScore } from './firebase.js';
 
 // ── Konstanten ─────────────────────────────────────────────────────────────
 const BASE_SPEED      = 300;   // px/s beim Start
@@ -62,11 +63,6 @@ function setupInput() {
       tryChangeLane(dx > 0 ? 1 : -1);
     }
   }, { passive: false });
-
-  // Klick auf Menu-Screens auch auf Canvas weiterleiten (Fallback)
-  canvas.addEventListener('click', e => {
-    if (state === STATE.MENU) startGame();
-  });
 }
 
 function tryChangeLane(dir) {
@@ -77,15 +73,44 @@ function tryChangeLane(dir) {
 }
 
 // ── UI-Buttons ──────────────────────────────────────────────────────────────
+let pendingScore = 0;
+
 function setupUI() {
   UI.init();
-  // Menu wird erst nach Preload gezeigt (siehe preloadAssets)
 
   document.getElementById('btn-start').addEventListener('click', startGame);
   document.getElementById('btn-retry').addEventListener('click', () => {
     state = STATE.MENU;
     UI.showMenu();
   });
+  document.getElementById('btn-leaderboard').addEventListener('click', () => {
+    UI.showLeaderboard();
+  });
+  document.getElementById('btn-lb-close').addEventListener('click', () => {
+    UI.hideLeaderboard();
+  });
+
+  // Username-Prompt: OK-Button + Enter
+  document.getElementById('btn-username-ok').addEventListener('click', handleUsernameSubmit);
+  document.getElementById('username-input').addEventListener('keydown', e => {
+    if (e.key === 'Enter') handleUsernameSubmit();
+  });
+}
+
+async function handleUsernameSubmit() {
+  const input = document.getElementById('username-input');
+  const name = input.value.trim();
+  if (!name) return;
+
+  await setUsername(name);
+  UI.hideUsernamePrompt();
+
+  // Jetzt den ausstehenden Score submitten
+  if (pendingScore > 0) {
+    submitScore(pendingScore);
+  }
+
+  UI.showGameOver(score, highScore, pendingScore >= Math.floor(highScore) && pendingScore > 0);
 }
 
 // ── Spiel vorinitialisieren (während Menü läuft) ─────────────────────────────
@@ -118,11 +143,8 @@ function startGame() {
 
 // ── Update ───────────────────────────────────────────────────────────────────
 function update(dt) {
-  // Straße scrollt auch im Menü (Hintergrundeffekt + warm-up)
-  if (road && state === STATE.MENU) {
-    road.update(dt, BASE_SPEED * 0.4);
-    return;
-  }
+  // Im Menü kein Road-Update – Sprite-Hintergrund
+  if (state === STATE.MENU) return;
 
   if (state !== STATE.PLAYING) return;
 
@@ -193,11 +215,20 @@ function triggerGameOver() {
   const finalScore = Math.floor(score);
   const isNewRecord = finalScore >= Math.floor(highScore) && finalScore > 0;
 
-  // Highscore speichern
+  // Highscore lokal speichern
   if (finalScore > 0) {
     localStorage.setItem('htrj_highscore', String(Math.floor(highScore)));
   }
 
+  // Wenn noch kein Username: Prompt zeigen, Score merken
+  if (!getUsername()) {
+    pendingScore = finalScore;
+    UI.showUsernamePrompt();
+    return;
+  }
+
+  // Username vorhanden: Score direkt submitten
+  submitScore(finalScore);
   UI.showGameOver(score, highScore, isNewRecord);
 }
 
@@ -205,7 +236,7 @@ function triggerGameOver() {
 function render() {
   ctx.clearRect(0, 0, CANVAS_W, CANVAS_H);
 
-  if (road && (state === STATE.PLAYING || state === STATE.GAME_OVER || state === STATE.MENU)) {
+  if (road && (state === STATE.PLAYING || state === STATE.GAME_OVER)) {
     road.render(ctx);
 
     // Items (hinter Autos)
@@ -256,6 +287,7 @@ function scaleGame() {
 
 // ── Preloader ─────────────────────────────────────────────────────────────────
 const PRELOAD_ASSETS = [
+  'assets/sprites/menu-bg.png',
   'assets/sprites/cabrio.png',
   'assets/sprites/cabrio-smoken.png',
   'assets/sprites/joint.png',
@@ -293,16 +325,40 @@ function preloadAssets(onDone) {
 }
 
 // ── Boot ─────────────────────────────────────────────────────────────────────
-window.addEventListener('DOMContentLoaded', () => {
+function bootGame() {
+  const container = document.getElementById('game-container');
+  container.classList.remove('hidden');
+
   scaleGame();
   window.addEventListener('resize', scaleGame);
   setupInput();
   setupUI();
 
+  // Firebase sofort starten (Auth läuft im Hintergrund)
+  initFirebase();
+
   preloadAssets(() => {
-    initGame(); // alles vorinitialisieren während Menü angezeigt wird
+    initGame();
     document.getElementById('loading-screen').classList.add('hidden');
     UI.showMenu();
   });
   requestAnimationFrame(gameLoop);
+}
+
+window.addEventListener('DOMContentLoaded', () => {
+  const consentScreen = document.getElementById('consent-screen');
+
+  // Consent schon akzeptiert?
+  if (localStorage.getItem('htrj_consent') === '1') {
+    consentScreen.classList.add('hidden');
+    bootGame();
+    return;
+  }
+
+  // Auf OK warten
+  document.getElementById('btn-consent').addEventListener('click', () => {
+    localStorage.setItem('htrj_consent', '1');
+    consentScreen.classList.add('hidden');
+    bootGame();
+  });
 });
