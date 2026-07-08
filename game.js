@@ -29,6 +29,7 @@ let road        = null;
 let playerCar   = null;
 let trafficCars = [];
 let items       = [];
+let popups      = [];   // aufsteigende Punkte-Einblendungen (z.B. Joint +3.000)
 let spawner     = null;
 let itemSpawner = null;
 let effects     = null;
@@ -121,6 +122,7 @@ function initGame() {
   playerCar   = new PlayerCar();
   trafficCars = [];
   items       = [];
+  popups      = [];
   spawner     = new TrafficSpawner();
   itemSpawner = new ItemSpawner();
   effects     = new EffectManager();
@@ -190,8 +192,8 @@ function update(dt) {
     if (car.isOffScreen()) trafficCars.splice(i, 1);
   }
 
-  // Items spawnen
-  const newItem = itemSpawner.update(dt, effSpeed);
+  // Items spawnen (nur in Spuren, die oben frei von Verkehr sind)
+  const newItem = itemSpawner.update(dt, effSpeed, trafficCars);
   if (newItem) items.push(newItem);
 
   // Items updaten + Pickup
@@ -202,7 +204,10 @@ function update(dt) {
     if (!item.collected && item.collidesWith(playerCar)) {
       item.collect();
       effects.activate(item.type);
-      if (item.type === 'joint') score += 3000;
+      if (item.type === 'joint') {
+        score += 5000;
+        spawnPopup(item.x + item.w / 2, item.y + item.h / 2, `+${(5000).toLocaleString('de-DE')}`, '#00e676');
+      }
       Audio.play(item.type === 'star' ? 'star' : item.type === 'joint' ? 'joint' : 'collect');
     }
 
@@ -211,6 +216,18 @@ function update(dt) {
       items.splice(i, 1);
     }
   }
+
+  // Punkte-Einblendungen aufsteigen lassen + ausfaden
+  for (let i = popups.length - 1; i >= 0; i--) {
+    const p = popups[i];
+    p.life -= dt;
+    p.y    -= 55 * (dt / 1000);
+    if (p.life <= 0) popups.splice(i, 1);
+  }
+}
+
+function spawnPopup(x, y, text, color) {
+  popups.push({ x, y, text, color, life: 1100, maxLife: 1100 });
 }
 
 function triggerGameOver() {
@@ -258,6 +275,21 @@ function render() {
     // Spielerauto
     playerCar.render(ctx, effects);
 
+    // Punkte-Einblendungen (über allem)
+    for (const p of popups) {
+      const a = Math.max(0, p.life / p.maxLife);
+      ctx.save();
+      ctx.globalAlpha  = a;
+      ctx.fillStyle    = p.color;
+      ctx.font         = 'bold 30px Courier New';
+      ctx.textAlign    = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.shadowColor  = p.color;
+      ctx.shadowBlur   = 8;
+      ctx.fillText(p.text, p.x, p.y);
+      ctx.restore();
+    }
+
     // Geschwindigkeitsanzeige (klein, unten)
     ctx.fillStyle = 'rgba(255,255,255,0.2)';
     ctx.font      = '10px Courier New';
@@ -298,9 +330,11 @@ const PRELOAD_ASSETS = [
   'assets/sprites/cabrio.png',
   'assets/sprites/cabrio-smoken.png',
   'assets/sprites/cabrio-surprised.jpeg',
+  'assets/sprites/cabrio-disco.jpeg',
   'assets/sprites/joint.png',
   'assets/sprites/diskokugel.png',
   'assets/sprites/lipstick.jpeg',
+  'assets/sprites/x2.jpeg',
   'assets/sprites/traffic-blue.png',
   'assets/sprites/traffic-red.png',
   'assets/sprites/traffic-orange.png',

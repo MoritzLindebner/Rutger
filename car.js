@@ -30,6 +30,7 @@ export class PlayerCar {
     this.sprite          = this._loadAndProcess('assets/sprites/cabrio.png');
     this.spriteSmoken    = this._loadAndProcess('assets/sprites/cabrio-smoken.png');
     this.spriteSurprised = this._loadAndProcess('assets/sprites/cabrio-surprised.jpeg');
+    this.spriteDisco     = this._loadAndProcess('assets/sprites/cabrio-disco.jpeg');
   }
 
   _loadAndProcess(src) {
@@ -152,10 +153,12 @@ export class PlayerCar {
     const cx  = this.x + CAR_W / 2;
     const cy  = y + CAR_H / 2;
 
-    // Welches Sprite? Lippenstift (überrascht) > Joint (smoken) > normal
+    // Welches Sprite? Lippenstift (überrascht) > Diskokugel (disco) > Joint (smoken) > normal
     let spriteObj = this.sprite;
     if (effects?.isLipstick && this.spriteSurprised?.img) {
       spriteObj = this.spriteSurprised;
+    } else if (effects?.isStar && this.spriteDisco?.img) {
+      spriteObj = this.spriteDisco;
     } else if (effects?.isSmoking && this.spriteSmoken?.img) {
       spriteObj = this.spriteSmoken;
     }

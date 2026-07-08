@@ -9,15 +9,13 @@ const SPAWN_WEIGHTS = [
   { type: 'joint',    weight: 30 },
   { type: 'star',     weight: 20 },
   { type: 'lipstick', weight: 20 },
-  { type: 'x3',       weight: 10 },
 ];
 
 export const EFFECT_DURATION = {
   star:       5000,
   jointSmoke: 3000,  // Phase 1: Rutger raucht
   jointBlur:  6000,  // Phase 2: Sicht verschwimmt
-  x2:         8000,
-  x3:         6000,
+  x2:         12000, // Punkte-Verdopplung
   lipstick:   7000,  // rote Fahrbahn + unverwundbar + fast Vollgas
 };
 
@@ -32,12 +30,14 @@ const SPRITES = {
   joint:    loadSprite('assets/sprites/joint.png'),
   star:     loadSprite('assets/sprites/diskokugel.png'),
   lipstick: loadSprite('assets/sprites/lipstick.jpeg'),
+  x2:       loadSprite('assets/sprites/x2.jpeg'),
 };
 
 // Fit-Modus pro Sprite: 'stretch' (ganzes Bild auf 80x80) oder
 // 'contain' (auf Motiv zuschneiden + seitenverhältnis-erhaltend einpassen).
 const SPRITE_FIT = {
   lipstick: 'contain', // schmales Motiv in breitem Rahmen → sonst gequetscht
+  x2:       'contain', // breites Logo → sonst gequetscht
 };
 
 function removeWhiteBg(img, fit = 'stretch') {
@@ -180,8 +180,9 @@ export class Item {
 
     ctx.save();
     ctx.translate(this.x + this.w / 2, this.y + this.h / 2 + bob);
-    // Diskokugel + Lippenstift drehen sich langsam
+    // Diskokugel + Lippenstift drehen sich; x2 wippt sanft (bleibt lesbar)
     if (this.type === 'star' || this.type === 'lipstick') ctx.rotate(this.rotT * 0.5);
+    else if (this.type === 'x2') ctx.rotate(Math.sin(this.rotT * 1.5) * 0.18);
     this._draw(ctx);
     ctx.restore();
   }
@@ -192,6 +193,7 @@ export class Item {
     const sprKey = this.type === 'star' ? 'star'
                  : this.type === 'joint' ? 'joint'
                  : this.type === 'lipstick' ? 'lipstick'
+                 : this.type === 'x2' ? 'x2'
                  : null;
     const spr = getSprite(sprKey);
 
@@ -202,8 +204,8 @@ export class Item {
     }
 
     // Fallback Canvas-Kreise (solange Sprite lädt)
-    const colors = { star: '#c0c0c0', joint: '#00c853', x2: '#ff00cc', x3: '#ff6600', lipstick: '#e11d3a' };
-    const labels = { star: '🪩',       joint: '🌿',      x2: '×2',     x3: '×3',      lipstick: '💄' };
+    const colors = { star: '#c0c0c0', joint: '#00c853', x2: '#ffb000', lipstick: '#e11d3a' };
+    const labels = { star: '🪩',       joint: '🌿',      x2: '×2',      lipstick: '💄' };
     ctx.fillStyle   = colors[this.type] || '#fff';
     ctx.shadowColor = colors[this.type] || '#fff';
     ctx.shadowBlur  = 10;
@@ -226,14 +228,36 @@ export class ItemSpawner {
     this.interval = this._next();
   }
   _next() { return 4000 + Math.random() * 3000; }
-  update(dt, speed) {
+
+  update(dt, speed, trafficCars = []) {
     this.timer += dt;
-    if (this.timer >= this.interval) {
-      this.timer    = 0;
-      this.interval = this._next();
-      return new Item(Math.floor(Math.random() * LANE_COUNT), speed);
+    if (this.timer < this.interval) return null;
+
+    const lane = this._pickFreeLane(trafficCars);
+    if (lane === -1) {
+      // Alle Spuren oben durch Verkehr belegt – kurz warten, dann neu versuchen
+      this.timer = this.interval - 250;
+      return null;
     }
-    return null;
+    this.timer    = 0;
+    this.interval = this._next();
+    return new Item(lane, speed);
+  }
+
+  // Spur wählen, die im oberen Spawn-Bereich frei von Gegenverkehr ist,
+  // damit Items nicht in Autos spawnen.
+  _pickFreeLane(trafficCars) {
+    const blocked = new Set();
+    for (const car of trafficCars) {
+      // Auto überlappt die Spawn-Zone nahe dem oberen Rand?
+      if (car.y < 260 && car.y + car.h > -120) blocked.add(car.lane);
+    }
+    const free = [];
+    for (let l = 0; l < LANE_COUNT; l++) {
+      if (!blocked.has(l)) free.push(l);
+    }
+    if (free.length === 0) return -1;
+    return free[Math.floor(Math.random() * free.length)];
   }
 }
 
@@ -264,10 +288,6 @@ export class EffectManager {
       case 'x2':
         this.multiplier = Math.max(this.multiplier, 2);
         this.multTime   = EFFECT_DURATION.x2;
-        break;
-      case 'x3':
-        this.multiplier = Math.max(this.multiplier, 3);
-        this.multTime   = EFFECT_DURATION.x3;
         break;
       case 'lipstick':
         this.lipTime = EFFECT_DURATION.lipstick;
