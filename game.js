@@ -12,6 +12,7 @@ const BASE_SPEED      = 300;   // px/s beim Start
 const MAX_SPEED       = 900;   // px/s Maximum
 const SPEED_ACCEL     = 8;     // px/s² Beschleunigung
 const BASE_SCORE_RATE = 60;    // Punkte/s bei Basis-Geschwindigkeit
+const LIPSTICK_SPEED  = 1400;  // effektives Tempo während Lippenstift-Effekt (deutlich über MAX_SPEED)
 
 // ── States ─────────────────────────────────────────────────────────────────
 const STATE = { MENU: 'MENU', PLAYING: 'PLAYING', GAME_OVER: 'GAME_OVER' };
@@ -32,6 +33,7 @@ let spawner     = null;
 let itemSpawner = null;
 let effects     = null;
 let speed       = BASE_SPEED;
+let displaySpeed = BASE_SPEED; // effektives Tempo (inkl. Boost) für Anzeige/Logik
 let score       = 0;
 let highScore   = parseInt(localStorage.getItem('htrj_highscore') || '0', 10);
 
@@ -123,6 +125,7 @@ function initGame() {
   itemSpawner = new ItemSpawner();
   effects     = new EffectManager();
   speed       = BASE_SPEED;
+  displaySpeed = BASE_SPEED;
   score       = 0;
 }
 
@@ -151,23 +154,27 @@ function update(dt) {
   // Geschwindigkeit erhöhen
   speed = Math.min(MAX_SPEED, speed + SPEED_ACCEL * (dt / 1000));
 
+  // Effektives Tempo: während Lippenstift-Effekt fast Vollgas
+  const effSpeed = effects.isLipstick ? Math.max(speed, LIPSTICK_SPEED) : speed;
+  displaySpeed = effSpeed;
+
   // Straße scrollen
-  road.update(dt, speed);
+  road.update(dt, effSpeed);
 
   // Spielerauto
-  playerCar.update(dt);
+  playerCar.update(dt, effects);
 
   // Effekte
   effects.update(dt, canvas);
 
   // Score
-  score += BASE_SCORE_RATE * effects.totalMultiplier * (speed / BASE_SPEED) * (dt / 1000);
+  score += BASE_SCORE_RATE * effects.totalMultiplier * (effSpeed / BASE_SPEED) * (dt / 1000);
   if (score > highScore) highScore = score;
   UI.updateScore(score, highScore);
   UI.updateEffects(effects);
 
   // Gegenverkehr spawnen
-  const newCar = spawner.update(dt, speed);
+  const newCar = spawner.update(dt, effSpeed);
   if (newCar) trafficCars.push(newCar);
 
   // Gegenverkehr updaten + Kollision
@@ -184,7 +191,7 @@ function update(dt) {
   }
 
   // Items spawnen
-  const newItem = itemSpawner.update(dt, speed);
+  const newItem = itemSpawner.update(dt, effSpeed);
   if (newItem) items.push(newItem);
 
   // Items updaten + Pickup
@@ -237,7 +244,7 @@ function render() {
   ctx.clearRect(0, 0, CANVAS_W, CANVAS_H);
 
   if (road && (state === STATE.PLAYING || state === STATE.GAME_OVER)) {
-    road.render(ctx);
+    road.render(ctx, effects);
 
     // Items (hinter Autos)
     for (const item of items) item.render(ctx);
@@ -255,7 +262,7 @@ function render() {
     ctx.fillStyle = 'rgba(255,255,255,0.2)';
     ctx.font      = '10px Courier New';
     ctx.textAlign = 'right';
-    ctx.fillText(`${Math.floor(speed)} km/h`, CANVAS_W - 12, CANVAS_H - 12);
+    ctx.fillText(`${Math.floor(displaySpeed)} km/h`, CANVAS_W - 12, CANVAS_H - 12);
   }
 }
 
@@ -290,8 +297,10 @@ const PRELOAD_ASSETS = [
   'assets/sprites/menu-bg.png',
   'assets/sprites/cabrio.png',
   'assets/sprites/cabrio-smoken.png',
+  'assets/sprites/cabrio-surprised.jpeg',
   'assets/sprites/joint.png',
   'assets/sprites/diskokugel.png',
+  'assets/sprites/lipstick.jpeg',
   'assets/sprites/traffic-blue.png',
   'assets/sprites/traffic-red.png',
   'assets/sprites/traffic-orange.png',

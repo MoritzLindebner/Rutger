@@ -5,10 +5,11 @@ import { CANVAS_H, LANE_COUNT, laneCenterX } from './road.js';
 const ITEM_SIZE = 80;
 
 const SPAWN_WEIGHTS = [
-  { type: 'x2',    weight: 40 },
-  { type: 'joint', weight: 30 },
-  { type: 'star',  weight: 20 },
-  { type: 'x3',    weight: 10 },
+  { type: 'x2',       weight: 40 },
+  { type: 'joint',    weight: 30 },
+  { type: 'star',     weight: 20 },
+  { type: 'lipstick', weight: 20 },
+  { type: 'x3',       weight: 10 },
 ];
 
 export const EFFECT_DURATION = {
@@ -17,6 +18,7 @@ export const EFFECT_DURATION = {
   jointBlur:  6000,  // Phase 2: Sicht verschwimmt
   x2:         8000,
   x3:         6000,
+  lipstick:   7000,  // rote Fahrbahn + unverwundbar + fast Vollgas
 };
 
 // ── Sprite-Loader ──────────────────────────────────────────────────────────
@@ -27,11 +29,18 @@ function loadSprite(src) {
 }
 
 const SPRITES = {
-  joint:  loadSprite('assets/sprites/joint.png'),
-  star:   loadSprite('assets/sprites/diskokugel.png'),
+  joint:    loadSprite('assets/sprites/joint.png'),
+  star:     loadSprite('assets/sprites/diskokugel.png'),
+  lipstick: loadSprite('assets/sprites/lipstick.jpeg'),
 };
 
-function removeWhiteBg(img) {
+// Fit-Modus pro Sprite: 'stretch' (ganzes Bild auf 80x80) oder
+// 'contain' (auf Motiv zuschneiden + seitenverhältnis-erhaltend einpassen).
+const SPRITE_FIT = {
+  lipstick: 'contain', // schmales Motiv in breitem Rahmen → sonst gequetscht
+};
+
+function removeWhiteBg(img, fit = 'stretch') {
   // BG-Removal auf voller Auflösung für beste Qualität
   const oc = document.createElement('canvas');
   oc.width  = img.naturalWidth  || img.width;
@@ -59,13 +68,44 @@ function removeWhiteBg(img) {
     queue.push(qx+1, qy, qx-1, qy, qx, qy+1, qx, qy-1);
   }
   octx.putImageData(d, 0, 0);
-  // Smooth downscale auf Zielgröße
+
+  // Zielcanvas
   const sc = document.createElement('canvas');
   sc.width  = ITEM_SIZE;
   sc.height = ITEM_SIZE;
   const sctx = sc.getContext('2d');
   sctx.imageSmoothingEnabled = true;
   sctx.imageSmoothingQuality = 'high';
+
+  if (fit === 'contain') {
+    // Bounding-Box der sichtbaren (nicht-transparenten) Pixel bestimmen
+    let minX = w, minY = h, maxX = -1, maxY = -1;
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        if (px[(y * w + x) * 4 + 3] !== 0) {
+          if (x < minX) minX = x;
+          if (x > maxX) maxX = x;
+          if (y < minY) minY = y;
+          if (y > maxY) maxY = y;
+        }
+      }
+    }
+    if (maxX >= minX && maxY >= minY) {
+      const bw = maxX - minX + 1;
+      const bh = maxY - minY + 1;
+      // Seitenverhältnis-erhaltend in ITEM_SIZE einpassen, zentriert
+      const scale = Math.min(ITEM_SIZE / bw, ITEM_SIZE / bh);
+      const dw = bw * scale;
+      const dh = bh * scale;
+      const dx = (ITEM_SIZE - dw) / 2;
+      const dy = (ITEM_SIZE - dh) / 2;
+      sctx.drawImage(oc, minX, minY, bw, bh, dx, dy, dw, dh);
+      return sc;
+    }
+    // Fallback: nichts gefunden → wie stretch
+  }
+
+  // Smooth downscale des ganzen Bildes auf Zielgröße
   sctx.drawImage(oc, 0, 0, ITEM_SIZE, ITEM_SIZE);
   return sc;
 }
@@ -74,7 +114,7 @@ function removeWhiteBg(img) {
 const _processed = {};
 function getSprite(key) {
   if (!_processed[key] && SPRITES[key]?.complete && SPRITES[key].naturalWidth > 0) {
-    _processed[key] = removeWhiteBg(SPRITES[key]);
+    _processed[key] = removeWhiteBg(SPRITES[key], SPRITE_FIT[key] || 'stretch');
   }
   return _processed[key] || null;
 }
@@ -140,8 +180,8 @@ export class Item {
 
     ctx.save();
     ctx.translate(this.x + this.w / 2, this.y + this.h / 2 + bob);
-    // Diskokugel dreht sich langsam
-    if (this.type === 'star') ctx.rotate(this.rotT * 0.5);
+    // Diskokugel + Lippenstift drehen sich langsam
+    if (this.type === 'star' || this.type === 'lipstick') ctx.rotate(this.rotT * 0.5);
     this._draw(ctx);
     ctx.restore();
   }
@@ -149,7 +189,11 @@ export class Item {
   _draw(ctx) {
     const s   = this.w;
     const s2  = s / 2;
-    const spr = getSprite(this.type === 'star' ? 'star' : this.type === 'joint' ? 'joint' : null);
+    const sprKey = this.type === 'star' ? 'star'
+                 : this.type === 'joint' ? 'joint'
+                 : this.type === 'lipstick' ? 'lipstick'
+                 : null;
+    const spr = getSprite(sprKey);
 
     if (spr) {
       ctx.imageSmoothingEnabled = false;
@@ -158,8 +202,8 @@ export class Item {
     }
 
     // Fallback Canvas-Kreise (solange Sprite lädt)
-    const colors = { star: '#c0c0c0', joint: '#00c853', x2: '#ff00cc', x3: '#ff6600' };
-    const labels = { star: '🪩',       joint: '🌿',      x2: '×2',     x3: '×3' };
+    const colors = { star: '#c0c0c0', joint: '#00c853', x2: '#ff00cc', x3: '#ff6600', lipstick: '#e11d3a' };
+    const labels = { star: '🪩',       joint: '🌿',      x2: '×2',     x3: '×3',      lipstick: '💄' };
     ctx.fillStyle   = colors[this.type] || '#fff';
     ctx.shadowColor = colors[this.type] || '#fff';
     ctx.shadowBlur  = 10;
@@ -200,6 +244,7 @@ export class EffectManager {
     this.spinTime    = 0;   // Auto dreht sich (direkt nach Diskokugel)
     this.jointSmoke  = 0;   // Phase 1: Smoken-Sprite
     this.jointBlur   = 0;   // Phase 2: Blur-Effekt
+    this.lipTime     = 0;   // Lippenstift: rote Fahrbahn + unverwundbar + Vollgas
     this.multiplier  = 1;
     this.multTime    = 0;
     this._blurVal    = 0;
@@ -224,10 +269,15 @@ export class EffectManager {
         this.multiplier = Math.max(this.multiplier, 3);
         this.multTime   = EFFECT_DURATION.x3;
         break;
+      case 'lipstick':
+        this.lipTime = EFFECT_DURATION.lipstick;
+        break;
     }
   }
 
-  get isInvincible()   { return this.starTime > 0; }
+  get isInvincible()   { return this.starTime > 0 || this.lipTime > 0; }
+  get isStar()         { return this.starTime > 0; }
+  get isLipstick()     { return this.lipTime > 0; }
   get isSmoking()      { return this.jointSmoke > 0; }
   get isBlurred()      { return this.jointBlur > 0; }
   get isSpinning()     { return this.spinTime > 0; }
@@ -242,6 +292,7 @@ export class EffectManager {
   update(dt, canvas) {
     if (this.starTime > 0) this.starTime = Math.max(0, this.starTime - dt);
     if (this.spinTime > 0) this.spinTime = Math.max(0, this.spinTime - dt);
+    if (this.lipTime  > 0) this.lipTime  = Math.max(0, this.lipTime  - dt);
 
     // Joint Phase 1 → Phase 2
     if (this.jointSmoke > 0) {
@@ -277,6 +328,7 @@ export class EffectManager {
     this.spinTime   = 0;
     this.jointSmoke = 0;
     this.jointBlur  = 0;
+    this.lipTime    = 0;
     this.multiplier = 1;
     this.multTime   = 0;
     canvas.style.filter    = '';

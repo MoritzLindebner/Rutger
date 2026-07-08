@@ -68,7 +68,7 @@ export class Road {
     this.dashOffset  = (this.dashOffset + pxPerMs * dt) % 40;
   }
 
-  render(ctx) {
+  render(ctx, effects) {
     // Gradienten einmalig erstellen und cachen
     if (!this._gradients) {
       const sky = ctx.createLinearGradient(0, 0, 0, CANVAS_H * 0.6);
@@ -83,6 +83,14 @@ export class Road {
       asphalt.addColorStop(0.85, '#1e1a28');
       asphalt.addColorStop(1,    '#1a1620');
 
+      // Rote Fahrbahn während Lippenstift-Effekt (gleiche Vignetten-Form)
+      const asphaltRed = ctx.createLinearGradient(ROAD_LEFT, 0, ROAD_RIGHT, 0);
+      asphaltRed.addColorStop(0,    '#3a0810');
+      asphaltRed.addColorStop(0.15, '#5a0c16');
+      asphaltRed.addColorStop(0.5,  '#7a0f1c');
+      asphaltRed.addColorStop(0.85, '#5a0c16');
+      asphaltRed.addColorStop(1,    '#3a0810');
+
       const sheen = ctx.createLinearGradient(ROAD_LEFT, 0, ROAD_RIGHT, 0);
       sheen.addColorStop(0,    'rgba(255,255,255,0)');
       sheen.addColorStop(0.48, 'rgba(255,255,255,0.02)');
@@ -90,7 +98,7 @@ export class Road {
       sheen.addColorStop(0.52, 'rgba(255,255,255,0.02)');
       sheen.addColorStop(1,    'rgba(255,255,255,0)');
 
-      this._gradients = { sky, asphalt, sheen };
+      this._gradients = { sky, asphalt, asphaltRed, sheen };
     }
 
     // ── Himmel / Hintergrund ─────────────────────────────────────────────
@@ -118,7 +126,7 @@ export class Road {
     ctx.shadowBlur = 0;
 
     // ── Asphalt ───────────────────────────────────────────────────────────
-    ctx.fillStyle = this._gradients.asphalt;
+    ctx.fillStyle = effects?.isLipstick ? this._gradients.asphaltRed : this._gradients.asphalt;
     ctx.fillRect(ROAD_LEFT, 0, LANE_WIDTH * LANE_COUNT, CANVAS_H);
 
     // Mittlerer Glanzstreifen

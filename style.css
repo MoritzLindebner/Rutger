@@ -473,6 +473,12 @@ body {
   border: 1px solid #00e67688;
 }
 
+.effect-badge.lipstick {
+  background: rgba(225, 29, 58, 0.2);
+  color: #ff4060;
+  border: 1px solid #e11d3a88;
+}
+
 #multiplier-badge {
   background: rgba(255, 0, 204, 0.2);
   color: #ff00cc;

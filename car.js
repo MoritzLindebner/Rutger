@@ -21,12 +21,15 @@ export class PlayerCar {
     this.invincibleTime = 0;
     this.highEffect     = false;
     this.wobble         = 0;
+    this.hearts         = [];   // Herz-Partikel (Lippenstift-Effekt)
+    this.heartTimer     = 0;
     this._loadSprite();
   }
 
   _loadSprite() {
-    this.sprite       = this._loadAndProcess('assets/sprites/cabrio.png');
-    this.spriteSmoken = this._loadAndProcess('assets/sprites/cabrio-smoken.png');
+    this.sprite          = this._loadAndProcess('assets/sprites/cabrio.png');
+    this.spriteSmoken    = this._loadAndProcess('assets/sprites/cabrio-smoken.png');
+    this.spriteSurprised = this._loadAndProcess('assets/sprites/cabrio-surprised.jpeg');
   }
 
   _loadAndProcess(src) {
@@ -48,7 +51,7 @@ export class PlayerCar {
     this.targetX = laneCenterX(next) - CAR_W / 2;
   }
 
-  update(dt) {
+  update(dt, effects) {
     // Smooth lane change (lerp)
     this.x += (this.targetX - this.x) * Math.min(1, LANE_CHANGE_SPEED * dt / 1000 * 10);
 
@@ -61,6 +64,69 @@ export class PlayerCar {
     if (this.highEffect) {
       this.wobble += dt / 200;
     }
+
+    // Herz-Partikel (Lippenstift): emittieren solange Effekt aktiv
+    if (effects?.isLipstick) {
+      this.heartTimer += dt;
+      while (this.heartTimer >= 90) {
+        this.heartTimer -= 90;
+        this._spawnHeart();
+      }
+    }
+
+    // Vorhandene Herzen bewegen + verblassen (auch nach Effektende)
+    for (let i = this.hearts.length - 1; i >= 0; i--) {
+      const h = this.hearts[i];
+      h.life -= dt;
+      h.y   += h.vy * (dt / 1000);
+      h.x   += h.vx * (dt / 1000);
+      h.rot += h.vr * (dt / 1000);
+      if (h.life <= 0) this.hearts.splice(i, 1);
+    }
+  }
+
+  _spawnHeart() {
+    const COLORS = ['#ff2d5e', '#ff5c8a', '#e11d3a'];
+    const cx     = this.x + CAR_W / 2;
+    const spread = CAR_W * 0.55;
+    const maxLife = 900 + Math.random() * 400;
+    this.hearts.push({
+      x:       cx + (Math.random() - 0.5) * spread,
+      y:       PLAYER_Y + CAR_H * 0.45 + Math.random() * 30,
+      vy:      -60 - Math.random() * 50,          // aufsteigen
+      vx:      (Math.random() - 0.5) * 30,        // leichter Drift
+      vr:      (Math.random() - 0.5) * 2,
+      rot:     (Math.random() - 0.5) * 0.6,
+      size:    10 + Math.random() * 10,
+      color:   COLORS[Math.floor(Math.random() * COLORS.length)],
+      maxLife,
+      life:    maxLife,
+    });
+  }
+
+  _renderHearts(ctx) {
+    if (this.hearts.length === 0) return;
+    ctx.save();
+    ctx.imageSmoothingEnabled = true;
+    for (const h of this.hearts) {
+      ctx.save();
+      ctx.globalAlpha = Math.max(0, h.life / h.maxLife);
+      ctx.fillStyle   = h.color;
+      ctx.translate(h.x, h.y);
+      ctx.rotate(h.rot);
+      const s = h.size / 16;
+      ctx.scale(s, s);
+      // Herz-Pfad (Breite ~16, um 0 zentriert)
+      ctx.beginPath();
+      ctx.moveTo(0, 5);
+      ctx.bezierCurveTo(0, 1, -8, -1, -8, 5);
+      ctx.bezierCurveTo(-8, 10, -1, 13, 0, 16);
+      ctx.bezierCurveTo(1, 13, 8, 10, 8, 5);
+      ctx.bezierCurveTo(8, -1, 0, 1, 0, 5);
+      ctx.fill();
+      ctx.restore();
+    }
+    ctx.restore();
   }
 
   activateInvincible(ms = 5000) {
@@ -86,10 +152,17 @@ export class PlayerCar {
     const cx  = this.x + CAR_W / 2;
     const cy  = y + CAR_H / 2;
 
-    // Welches Sprite?
-    const useSmoking = effects?.isSmoking && this.spriteSmoken?.img;
-    const spriteObj  = useSmoking ? this.spriteSmoken : this.sprite;
-    const spr        = spriteObj?.img || null;
+    // Welches Sprite? Lippenstift (überrascht) > Joint (smoken) > normal
+    let spriteObj = this.sprite;
+    if (effects?.isLipstick && this.spriteSurprised?.img) {
+      spriteObj = this.spriteSurprised;
+    } else if (effects?.isSmoking && this.spriteSmoken?.img) {
+      spriteObj = this.spriteSmoken;
+    }
+    const spr = spriteObj?.img || null;
+
+    // Herz-Partikel hinter/um das Auto (Lippenstift-Effekt)
+    this._renderHearts(ctx);
 
     ctx.save();
     ctx.imageSmoothingEnabled = false;
@@ -103,8 +176,16 @@ export class PlayerCar {
       ctx.translate(-cx, -cy);
     }
 
-    // Regenbogen-Glow als shadowBlur (dreht mit, kein Rechteck sichtbar)
-    if (effects?.isInvincible) {
+    // Glow als shadowBlur (dreht mit, kein Rechteck sichtbar)
+    if (effects?.isLipstick) {
+      // Eigener Lippenstift-Glow: pulsierendes Rot ↔ Pink
+      const t    = Date.now();
+      const hue  = 340 + Math.sin(t / 300) * 12;
+      const blur = 16  + Math.sin(t / 120) * 8;
+      ctx.shadowColor = `hsla(${hue}, 100%, 60%, 0.9)`;
+      ctx.shadowBlur  = blur;
+    } else if (effects?.isInvincible) {
+      // Regenbogen (nur Diskokugel)
       const t   = Date.now() / 150;
       const hue = (t * 60) % 360;
       ctx.shadowColor = `hsla(${hue}, 100%, 70%, 0.9)`;
@@ -136,12 +217,18 @@ const TRAFFIC_TYPES = [
 const _spriteCache = {};
 
 function _removeBgHQ(img, targetW, targetH) {
-  // BG-Removal auf voller Auflösung für beste Qualität
+  // Auf zentriertes Quadrat zuschneiden (kürzere Kante), damit breite Sprites
+  // nicht verzerren. Für quadratische Sprites ein No-op.
+  const side = Math.min(img.width, img.height);
+  const sx   = (img.width  - side) / 2;
+  const sy   = (img.height - side) / 2;
+
+  // BG-Removal auf voller (quadratischer) Auflösung für beste Qualität
   const oc   = document.createElement('canvas');
-  oc.width   = img.width;
-  oc.height  = img.height;
+  oc.width   = side;
+  oc.height  = side;
   const octx = oc.getContext('2d');
-  octx.drawImage(img, 0, 0);
+  octx.drawImage(img, sx, sy, side, side, 0, 0, side, side);
   const id = octx.getImageData(0, 0, oc.width, oc.height);
   const d  = id.data;
   const w  = oc.width, h = oc.height;

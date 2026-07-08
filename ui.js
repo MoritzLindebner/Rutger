@@ -19,6 +19,7 @@ export const UI = {
       newRecord:      document.getElementById('new-record-badge'),
       multiplierBadge: document.getElementById('multiplier-badge'),
       starBadge:      document.getElementById('star-badge'),
+      lipstickBadge:  document.getElementById('lipstick-badge'),
       jointBadge:     document.getElementById('joint-badge'),
       btnStart:       document.getElementById('btn-start'),
       btnRetry:       document.getElementById('btn-retry'),
@@ -127,10 +128,16 @@ export const UI = {
       this.els.multiplierBadge.classList.add('hidden');
     }
 
-    if (effects.isInvincible) {
+    if (effects.isStar) {
       this.els.starBadge.classList.remove('hidden');
     } else {
       this.els.starBadge.classList.add('hidden');
+    }
+
+    if (effects.isLipstick) {
+      this.els.lipstickBadge.classList.remove('hidden');
+    } else {
+      this.els.lipstickBadge.classList.add('hidden');
     }
 
     if (effects.isSmoking || effects.isBlurred) {
