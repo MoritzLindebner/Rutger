@@ -1,7 +1,14 @@
 // road.js – Scrollende Nacht-Straße
 
 export const CANVAS_W   = 600;
-export const CANVAS_H   = 800;
+// Höhe passt sich dem Seitenverhältnis des Geräts an (Vollbild auf hohen Handys),
+// begrenzt auf 800–1400. Desktop/breite Screens bleiben bei 800 (Portrait-Box).
+export const CANVAS_H   = (() => {
+  const vw = window.innerWidth  || CANVAS_W;
+  const vh = window.innerHeight || 800;
+  const ideal = Math.round(CANVAS_W * vh / vw);
+  return Math.max(800, Math.min(1400, ideal));
+})();
 export const LANE_COUNT = 4;
 export const LANE_WIDTH = 120;
 export const ROAD_LEFT  = (CANVAS_W - LANE_WIDTH * LANE_COUNT) / 2; // 60px

@@ -20,6 +20,8 @@ export const UI = {
       multiplierBadge: document.getElementById('multiplier-badge'),
       starBadge:      document.getElementById('star-badge'),
       lipstickBadge:  document.getElementById('lipstick-badge'),
+      microBadge:     document.getElementById('micro-badge'),
+      beerBadge:      document.getElementById('beer-badge'),
       jointBadge:     document.getElementById('joint-badge'),
       btnStart:       document.getElementById('btn-start'),
       btnRetry:       document.getElementById('btn-retry'),
@@ -138,6 +140,22 @@ export const UI = {
       this.els.lipstickBadge.classList.remove('hidden');
     } else {
       this.els.lipstickBadge.classList.add('hidden');
+    }
+
+    if (effects.isMicro) {
+      this.els.microBadge.classList.remove('hidden');
+    } else {
+      this.els.microBadge.classList.add('hidden');
+    }
+
+    if (effects.isDrunk) {
+      this.els.beerBadge.textContent = '🍺 BETRUNKEN';
+      this.els.beerBadge.classList.remove('hidden');
+    } else if (effects.isSick) {
+      this.els.beerBadge.textContent = '🤢 ÜBEL';
+      this.els.beerBadge.classList.remove('hidden');
+    } else {
+      this.els.beerBadge.classList.add('hidden');
     }
 
     if (effects.isSmoking || effects.isBlurred) {

@@ -13,6 +13,7 @@ const MAX_SPEED       = 900;   // px/s Maximum
 const SPEED_ACCEL     = 8;     // px/s² Beschleunigung
 const BASE_SCORE_RATE = 60;    // Punkte/s bei Basis-Geschwindigkeit
 const LIPSTICK_SPEED  = 1400;  // effektives Tempo während Lippenstift-Effekt (deutlich über MAX_SPEED)
+const MICRO_BLAST_RADIUS = 240; // Mikrofon: Distanz (px) ab der ein Auto weggeschleudert wird
 
 // ── States ─────────────────────────────────────────────────────────────────
 const STATE = { MENU: 'MENU', PLAYING: 'PLAYING', GAME_OVER: 'GAME_OVER' };
@@ -23,6 +24,13 @@ const ctx    = canvas.getContext('2d');
 canvas.width  = CANVAS_W;
 canvas.height = CANVAS_H;
 
+// Anzeigegröße von Container & Canvas an die dynamische Höhe koppeln (Vollbild-Skalierung)
+const gameContainer = document.getElementById('game-container');
+gameContainer.style.width  = `${CANVAS_W}px`;
+gameContainer.style.height = `${CANVAS_H}px`;
+canvas.style.width  = `${CANVAS_W}px`;
+canvas.style.height = `${CANVAS_H}px`;
+
 // ── Game State ──────────────────────────────────────────────────────────────
 let state       = STATE.MENU;
 let road        = null;
@@ -30,6 +38,8 @@ let playerCar   = null;
 let trafficCars = [];
 let items       = [];
 let popups      = [];   // aufsteigende Punkte-Einblendungen (z.B. Joint +3.000)
+let shockwaves  = [];   // expandierende Ringe (Mikrofon-Schockwelle)
+let lastShockwave = 0;  // Zeitstempel des letzten Rings (Cooldown gegen Verklumpen)
 let spawner     = null;
 let itemSpawner = null;
 let effects     = null;
@@ -123,6 +133,8 @@ function initGame() {
   trafficCars = [];
   items       = [];
   popups      = [];
+  shockwaves  = [];
+  lastShockwave = 0;
   spawner     = new TrafficSpawner();
   itemSpawner = new ItemSpawner();
   effects     = new EffectManager();
@@ -176,13 +188,32 @@ function update(dt) {
   UI.updateEffects(effects);
 
   // Gegenverkehr spawnen
-  const newCar = spawner.update(dt, effSpeed);
+  // Autos zur Basis-Geschwindigkeit spawnen; der Boost (Lippenstift) wird einheitlich
+  // über speedScale im Update angewandt – so beschleunigen alte wie neue Autos gemeinsam.
+  const newCar = spawner.update(dt, speed);
   if (newCar) trafficCars.push(newCar);
+
+  const worldScale = effSpeed / speed;   // 1 normal, >1 während Lippenstift-Boost
+
+  // Mikrofon-Schockwelle: Autos dürfen nah rankommen und werden erst innerhalb
+  // von MICRO_BLAST_RADIUS weggeschleudert – so „feuert" die Welle mehrfach übers Effekt.
+  const playerCX = playerCar.x + playerCar.w / 2;
+  const playerCY = PLAYER_Y + playerCar.h / 2;
 
   // Gegenverkehr updaten + Kollision
   for (let i = trafficCars.length - 1; i >= 0; i--) {
     const car = trafficCars[i];
-    car.update(dt);
+
+    if (effects.isMicro && !car.blasted) {
+      const ccx = car.x + car.w / 2;
+      const ccy = car.y + car.h / 2;
+      if (Math.hypot(ccx - playerCX, ccy - playerCY) <= MICRO_BLAST_RADIUS) {
+        car.blast(playerCX, playerCY);
+        spawnShockwave(playerCX, playerCY, 700, false); // Puls mit Cooldown
+      }
+    }
+
+    car.update(dt, worldScale);
 
     if (!effects.isInvincible && car.collidesWith(playerCar)) {
       triggerGameOver();
@@ -192,14 +223,14 @@ function update(dt) {
     if (car.isOffScreen()) trafficCars.splice(i, 1);
   }
 
-  // Items spawnen (nur in Spuren, die oben frei von Verkehr sind)
-  const newItem = itemSpawner.update(dt, effSpeed, trafficCars);
+  // Items spawnen (Basis-Geschwindigkeit; Boost via worldScale im Update)
+  const newItem = itemSpawner.update(dt, speed, trafficCars);
   if (newItem) items.push(newItem);
 
   // Items updaten + Pickup
   for (let i = items.length - 1; i >= 0; i--) {
     const item = items[i];
-    item.update(dt);
+    item.update(dt, worldScale);
 
     if (!item.collected && item.collidesWith(playerCar)) {
       item.collect();
@@ -207,6 +238,14 @@ function update(dt) {
       if (item.type === 'joint') {
         score += 5000;
         spawnPopup(item.x + item.w / 2, item.y + item.h / 2, `+${(5000).toLocaleString('de-DE')}`, '#00e676');
+      }
+      if (item.type === 'beer') {
+        score += 5000;
+        spawnPopup(item.x + item.w / 2, item.y + item.h / 2, `+${(5000).toLocaleString('de-DE')}`, '#c9a66b');
+      }
+      if (item.type === 'micro') {
+        // Signatur-Puls beim Einsammeln (größer, ohne Cooldown-Sperre)
+        spawnShockwave(playerCX, playerCY, 950, true);
       }
       Audio.play(item.type === 'star' ? 'star' : item.type === 'joint' ? 'joint' : 'collect');
     }
@@ -224,10 +263,26 @@ function update(dt) {
     p.y    -= 55 * (dt / 1000);
     if (p.life <= 0) popups.splice(i, 1);
   }
+
+  // Schockwellen-Ringe expandieren + ausfaden
+  for (let i = shockwaves.length - 1; i >= 0; i--) {
+    const sw = shockwaves[i];
+    sw.life -= dt;
+    if (sw.life <= 0) shockwaves.splice(i, 1);
+  }
 }
 
 function spawnPopup(x, y, text, color) {
   popups.push({ x, y, text, color, life: 1100, maxLife: 1100 });
+}
+
+// Schockwellen-Ring. force=true umgeht den Cooldown (Signatur-Puls beim Einsammeln);
+// sonst nur ein Ring alle 200ms, damit gleichzeitige Blasts nicht verklumpen.
+function spawnShockwave(x, y, maxR = 700, force = false) {
+  const now = Date.now();
+  if (!force && now - lastShockwave < 200) return;
+  lastShockwave = now;
+  shockwaves.push({ x, y, life: 650, maxLife: 650, maxR });
 }
 
 function triggerGameOver() {
@@ -272,6 +327,23 @@ function render() {
     for (const car of trafficCars) car.render(ctx);
     ctx.restore();
 
+    // Schockwellen-Ringe (Mikrofon) – unter dem Auto hervorlaufend
+    for (const sw of shockwaves) {
+      const t = 1 - sw.life / sw.maxLife;   // 0→1
+      const r = t * sw.maxR;
+      const a = Math.max(0, sw.life / sw.maxLife);
+      ctx.save();
+      ctx.globalAlpha = a * 0.8;
+      ctx.lineWidth   = 14 * (1 - t) + 3;
+      ctx.strokeStyle = `hsla(${280 + t * 60}, 100%, 65%, 1)`;
+      ctx.shadowColor = ctx.strokeStyle;
+      ctx.shadowBlur  = 20;
+      ctx.beginPath();
+      ctx.arc(sw.x, sw.y, r, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.restore();
+    }
+
     // Spielerauto
     playerCar.render(ctx, effects);
 
@@ -305,10 +377,16 @@ function gameLoop(timestamp) {
   const dt = Math.min(timestamp - lastTimestamp, 100);
   lastTimestamp = timestamp;
 
-  update(dt);
-  render();
-
+  // rAF zuerst planen + update/render kapseln: eine einzelne Frame-Exception
+  // darf die Loop nie dauerhaft killen (sonst friert das Spiel ein, Musik läuft weiter).
   requestAnimationFrame(gameLoop);
+
+  try {
+    update(dt);
+    render();
+  } catch (e) {
+    console.error('[gameLoop] Frame-Fehler:', e);
+  }
 }
 
 // ── Responsive Scaling ───────────────────────────────────────────────────────
@@ -331,10 +409,15 @@ const PRELOAD_ASSETS = [
   'assets/sprites/cabrio-smoken.png',
   'assets/sprites/cabrio-surprised.jpeg',
   'assets/sprites/cabrio-disco.jpeg',
+  'assets/sprites/cabrio-rap.jpeg',
+  'assets/sprites/cabrio-drink.jpeg',
+  'assets/sprites/cabrio-sick.jpeg',
   'assets/sprites/joint.png',
   'assets/sprites/diskokugel.png',
   'assets/sprites/lipstick.jpeg',
   'assets/sprites/x2.jpeg',
+  'assets/sprites/microphone.jpeg',
+  'assets/sprites/beer.jpeg',
   'assets/sprites/traffic-blue.png',
   'assets/sprites/traffic-red.png',
   'assets/sprites/traffic-orange.png',

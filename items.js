@@ -4,11 +4,16 @@ import { CANVAS_H, LANE_COUNT, laneCenterX } from './road.js';
 
 const ITEM_SIZE = 80;
 
+// x2-Multiplikatoren stapeln multiplikativ (2 → 4 → 8 …), gedeckelt.
+const X2_MAX_MULT = 8;
+
 const SPAWN_WEIGHTS = [
   { type: 'x2',       weight: 40 },
   { type: 'joint',    weight: 30 },
   { type: 'star',     weight: 20 },
   { type: 'lipstick', weight: 20 },
+  { type: 'micro',    weight: 20 },
+  { type: 'beer',     weight: 25 },
 ];
 
 export const EFFECT_DURATION = {
@@ -17,6 +22,9 @@ export const EFFECT_DURATION = {
   jointBlur:  6000,  // Phase 2: Sicht verschwimmt
   x2:         12000, // Punkte-Verdopplung
   lipstick:   7000,  // rote Fahrbahn + unverwundbar + fast Vollgas
+  micro:      6000,  // Schockwelle: alle Autos aus dem Bild + Musiknoten
+  beerDrunk:  6000,  // Bier Phase 1: betrunken (Schlingern + träge Lenkung)
+  beerSick:   2500,  // Bier Phase 2: übel (nur Optik, kurz nach dem Effekt)
 };
 
 // ── Sprite-Loader ──────────────────────────────────────────────────────────
@@ -31,6 +39,8 @@ const SPRITES = {
   star:     loadSprite('assets/sprites/diskokugel.png'),
   lipstick: loadSprite('assets/sprites/lipstick.jpeg'),
   x2:       loadSprite('assets/sprites/x2.jpeg'),
+  micro:    loadSprite('assets/sprites/microphone.jpeg'),
+  beer:     loadSprite('assets/sprites/beer.jpeg'),
 };
 
 // Fit-Modus pro Sprite: 'stretch' (ganzes Bild auf 80x80) oder
@@ -38,16 +48,25 @@ const SPRITES = {
 const SPRITE_FIT = {
   lipstick: 'contain', // schmales Motiv in breitem Rahmen → sonst gequetscht
   x2:       'contain', // breites Logo → sonst gequetscht
+  micro:    'contain', // schmales Mikrofon in breitem Rahmen → sonst gequetscht
+  beer:     'contain', // schmale Flasche in breitem Rahmen → sonst gequetscht
 };
 
 function removeWhiteBg(img, fit = 'stretch') {
-  // BG-Removal auf voller Auflösung für beste Qualität
+  // BG-Removal auf gedeckelter Arbeitsauflösung: erst klein skalieren (längere
+  // Kante ≤ WORK_MAX), dann Flood-Fill + BBox-Scan. Ausgabe bleibt ITEM_SIZE (80).
+  const srcW = img.naturalWidth  || img.width;
+  const srcH = img.naturalHeight || img.height;
+  if (!srcW) return img;
+  const WORK_MAX = 256;
+  const scaleWork = Math.min(1, WORK_MAX / Math.max(srcW, srcH));
   const oc = document.createElement('canvas');
-  oc.width  = img.naturalWidth  || img.width;
-  oc.height = img.naturalHeight || img.height;
-  if (!oc.width) return img;
+  oc.width  = Math.max(1, Math.round(srcW * scaleWork));
+  oc.height = Math.max(1, Math.round(srcH * scaleWork));
   const octx = oc.getContext('2d');
-  octx.drawImage(img, 0, 0);
+  octx.imageSmoothingEnabled = true;
+  octx.imageSmoothingQuality = 'high';
+  octx.drawImage(img, 0, 0, oc.width, oc.height);
   const d = octx.getImageData(0, 0, oc.width, oc.height);
   const px = d.data;
   const w = oc.width, h = oc.height;
@@ -145,9 +164,9 @@ export class Item {
     this.rotT      = 0; // für Diskokugel-Rotation
   }
 
-  update(dt) {
+  update(dt, speedScale = 1) {
     if (this.collected) { this.animT += dt; return; }
-    this.y    += this.speed * (dt / 1000);
+    this.y    += this.speed * speedScale * (dt / 1000);
     this.bobT += dt / 600;
     this.rotT += dt / 1000;
   }
@@ -182,7 +201,7 @@ export class Item {
     ctx.translate(this.x + this.w / 2, this.y + this.h / 2 + bob);
     // Diskokugel + Lippenstift drehen sich; x2 wippt sanft (bleibt lesbar)
     if (this.type === 'star' || this.type === 'lipstick') ctx.rotate(this.rotT * 0.5);
-    else if (this.type === 'x2') ctx.rotate(Math.sin(this.rotT * 1.5) * 0.18);
+    else if (this.type === 'x2' || this.type === 'micro' || this.type === 'beer') ctx.rotate(Math.sin(this.rotT * 1.5) * 0.18);
     this._draw(ctx);
     ctx.restore();
   }
@@ -194,6 +213,8 @@ export class Item {
                  : this.type === 'joint' ? 'joint'
                  : this.type === 'lipstick' ? 'lipstick'
                  : this.type === 'x2' ? 'x2'
+                 : this.type === 'micro' ? 'micro'
+                 : this.type === 'beer' ? 'beer'
                  : null;
     const spr = getSprite(sprKey);
 
@@ -204,8 +225,8 @@ export class Item {
     }
 
     // Fallback Canvas-Kreise (solange Sprite lädt)
-    const colors = { star: '#c0c0c0', joint: '#00c853', x2: '#ffb000', lipstick: '#e11d3a' };
-    const labels = { star: '🪩',       joint: '🌿',      x2: '×2',      lipstick: '💄' };
+    const colors = { star: '#c0c0c0', joint: '#00c853', x2: '#ffb000', lipstick: '#e11d3a', micro: '#a855f7', beer: '#c9a66b' };
+    const labels = { star: '🪩',       joint: '🌿',      x2: '×2',      lipstick: '💄',      micro: '🎤',      beer: '🍺' };
     ctx.fillStyle   = colors[this.type] || '#fff';
     ctx.shadowColor = colors[this.type] || '#fff';
     ctx.shadowBlur  = 10;
@@ -227,7 +248,7 @@ export class ItemSpawner {
     this.timer    = 0;
     this.interval = this._next();
   }
-  _next() { return 4000 + Math.random() * 3000; }
+  _next() { return 5000 + Math.random() * 4000; }
 
   update(dt, speed, trafficCars = []) {
     this.timer += dt;
@@ -269,6 +290,9 @@ export class EffectManager {
     this.jointSmoke  = 0;   // Phase 1: Smoken-Sprite
     this.jointBlur   = 0;   // Phase 2: Blur-Effekt
     this.lipTime     = 0;   // Lippenstift: rote Fahrbahn + unverwundbar + Vollgas
+    this.microTime   = 0;   // Mikrofon: Schockwelle wirft alle Autos aus dem Bild
+    this.beerDrunk   = 0;   // Bier Phase 1: betrunken (Handicap)
+    this.beerSick    = 0;   // Bier Phase 2: übel (Optik)
     this.multiplier  = 1;
     this.multTime    = 0;
     this._blurVal    = 0;
@@ -286,18 +310,29 @@ export class EffectManager {
         this.jointBlur  = 0; // startet wenn smoke endet
         break;
       case 'x2':
-        this.multiplier = Math.max(this.multiplier, 2);
+        // Stapelbar: jedes eingesammelte x2 verdoppelt erneut (bis X2_MAX_MULT)
+        this.multiplier = Math.min(this.multiplier * 2, X2_MAX_MULT);
         this.multTime   = EFFECT_DURATION.x2;
         break;
       case 'lipstick':
         this.lipTime = EFFECT_DURATION.lipstick;
         break;
+      case 'micro':
+        this.microTime = EFFECT_DURATION.micro;
+        break;
+      case 'beer':
+        this.beerDrunk = EFFECT_DURATION.beerDrunk;
+        this.beerSick  = 0; // startet wenn betrunken endet
+        break;
     }
   }
 
-  get isInvincible()   { return this.starTime > 0 || this.lipTime > 0; }
+  get isInvincible()   { return this.starTime > 0 || this.lipTime > 0 || this.microTime > 0; }
   get isStar()         { return this.starTime > 0; }
   get isLipstick()     { return this.lipTime > 0; }
+  get isMicro()        { return this.microTime > 0; }
+  get isDrunk()        { return this.beerDrunk > 0; }
+  get isSick()         { return this.beerSick > 0; }
   get isSmoking()      { return this.jointSmoke > 0; }
   get isBlurred()      { return this.jointBlur > 0; }
   get isSpinning()     { return this.spinTime > 0; }
@@ -313,6 +348,17 @@ export class EffectManager {
     if (this.starTime > 0) this.starTime = Math.max(0, this.starTime - dt);
     if (this.spinTime > 0) this.spinTime = Math.max(0, this.spinTime - dt);
     if (this.lipTime  > 0) this.lipTime  = Math.max(0, this.lipTime  - dt);
+    if (this.microTime > 0) this.microTime = Math.max(0, this.microTime - dt);
+
+    // Bier Phase 1 (betrunken) → Phase 2 (übel)
+    if (this.beerDrunk > 0) {
+      this.beerDrunk -= dt;
+      if (this.beerDrunk <= 0) {
+        this.beerDrunk = 0;
+        this.beerSick  = EFFECT_DURATION.beerSick; // Phase 2 starten
+      }
+    }
+    if (this.beerSick > 0) this.beerSick = Math.max(0, this.beerSick - dt);
 
     // Joint Phase 1 → Phase 2
     if (this.jointSmoke > 0) {
@@ -349,6 +395,9 @@ export class EffectManager {
     this.jointSmoke = 0;
     this.jointBlur  = 0;
     this.lipTime    = 0;
+    this.microTime  = 0;
+    this.beerDrunk  = 0;
+    this.beerSick   = 0;
     this.multiplier = 1;
     this.multTime   = 0;
     canvas.style.filter    = '';

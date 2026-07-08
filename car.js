@@ -1,12 +1,19 @@
 // car.js – Spielerauto (Cabrio) + Gegenverkehr
 
-import { CANVAS_H, LANE_COUNT, LANE_WIDTH, ROAD_LEFT, laneCenterX } from './road.js';
+import { CANVAS_W, CANVAS_H, LANE_COUNT, LANE_WIDTH, ROAD_LEFT, laneCenterX } from './road.js';
 
-export const PLAYER_Y    = 580;   // Y-Position des Spielerautos
+export const PLAYER_Y    = CANVAS_H - 220;   // Y-Position des Spielerautos (unten am Bildrand)
 const CAR_W              = 200;
 const CAR_H              = 200;
 const HITBOX_W           = 100;   // schmaler als Sprite für faireres Gefühl
+const HITBOX_INSET_TOP    = 16;   // Front (nach vorne): kleiner = Hitbox reicht weiter nach vorn
+const HITBOX_INSET_BOTTOM = 26;   // Heck
+const TRAFFIC_HITBOX_FRAC = 0.55; // Anteil der Sprite-Höhe, der beim Gegenverkehr kollidiert
 const LANE_CHANGE_SPEED  = 8;     // Lerp-Faktor pro Frame (höher = schneller)
+
+// Shared Cache für verarbeitete Spieler-Sprites (gekeyt per src), damit ein
+// erneutes initGame() (Retry) die schwere BG-Entfernung nicht wiederholt.
+const _playerSpriteCache = {};
 
 // ── Spielerauto ────────────────────────────────────────────────────────────
 export class PlayerCar {
@@ -21,8 +28,10 @@ export class PlayerCar {
     this.invincibleTime = 0;
     this.highEffect     = false;
     this.wobble         = 0;
-    this.hearts         = [];   // Herz-Partikel (Lippenstift-Effekt)
-    this.heartTimer     = 0;
+    this.particles      = [];   // Partikel: Herzen (Lippenstift) / Noten (Mikrofon)
+    this.particleTimer  = 0;
+    this.drunkOffset    = 0;    // seitlicher Schlinger-Versatz (Bier)
+    this.drunkPhase     = 0;
     this._loadSprite();
   }
 
@@ -31,18 +40,25 @@ export class PlayerCar {
     this.spriteSmoken    = this._loadAndProcess('assets/sprites/cabrio-smoken.png');
     this.spriteSurprised = this._loadAndProcess('assets/sprites/cabrio-surprised.jpeg');
     this.spriteDisco     = this._loadAndProcess('assets/sprites/cabrio-disco.jpeg');
+    this.spriteRap       = this._loadAndProcess('assets/sprites/cabrio-rap.jpeg');
+    this.spriteDrink     = this._loadAndProcess('assets/sprites/cabrio-drink.jpeg');
+    this.spriteSick      = this._loadAndProcess('assets/sprites/cabrio-sick.jpeg');
   }
 
   _loadAndProcess(src) {
+    // Über Instanzen cachen: initGame() läuft beim Boot UND bei jedem Retry –
+    // ohne Cache würden die 5 Spieler-Sprites jedes Mal neu verarbeitet.
+    if (_playerSpriteCache[src]) return _playerSpriteCache[src];
     const holder = { img: null };
     const image  = new Image();
     image.onload = () => { holder.img = _removeBgHQ(image, CAR_W, CAR_H); };
     image.onerror = () => console.warn(`[Car] Sprite nicht gefunden: ${src}`);
     image.src = src;
+    _playerSpriteCache[src] = holder;
     return holder;
   }
 
-  get hitboxX() { return this.x + (CAR_W - HITBOX_W) / 2; }
+  get hitboxX() { return this.x + this.drunkOffset + (CAR_W - HITBOX_W) / 2; }
   get hitboxY() { return PLAYER_Y; }
 
   changeLane(dir) {
@@ -53,8 +69,16 @@ export class PlayerCar {
   }
 
   update(dt, effects) {
-    // Smooth lane change (lerp)
-    this.x += (this.targetX - this.x) * Math.min(1, LANE_CHANGE_SPEED * dt / 1000 * 10);
+    // Smooth lane change (lerp) – während Betrunken (Bier) träger/übersteuert
+    const laneMul = effects?.isDrunk ? 0.5 : 1;
+    this.x += (this.targetX - this.x) * Math.min(1, LANE_CHANGE_SPEED * laneMul * dt / 1000 * 10);
+
+    // Betrunken: Auto schlingert seitlich (Offset wirkt auf Hitbox + Render)
+    if (effects?.isDrunk) this.drunkPhase += dt / 1000 * 2.2;
+    const swayTarget = effects?.isDrunk
+      ? (Math.sin(this.drunkPhase) + 0.5 * Math.sin(this.drunkPhase * 1.7)) * 22
+      : 0;
+    this.drunkOffset += (swayTarget - this.drunkOffset) * Math.min(1, dt / 1000 * 5);
 
     // Timers
     if (this.invincibleTime > 0) {
@@ -66,32 +90,56 @@ export class PlayerCar {
       this.wobble += dt / 200;
     }
 
-    // Herz-Partikel (Lippenstift): emittieren solange Effekt aktiv
-    if (effects?.isLipstick) {
-      this.heartTimer += dt;
-      while (this.heartTimer >= 90) {
-        this.heartTimer -= 90;
-        this._spawnHeart();
+    // Partikel emittieren: Herzen (Lippenstift) oder Musiknoten (Mikrofon)
+    const emit = effects?.isLipstick ? 'heart' : effects?.isMicro ? 'note' : null;
+    if (emit) {
+      this.particleTimer += dt;
+      const rate = emit === 'heart' ? 90 : 120;
+      while (this.particleTimer >= rate) {
+        this.particleTimer -= rate;
+        this._spawnParticle(emit);
       }
     }
 
-    // Vorhandene Herzen bewegen + verblassen (auch nach Effektende)
-    for (let i = this.hearts.length - 1; i >= 0; i--) {
-      const h = this.hearts[i];
-      h.life -= dt;
-      h.y   += h.vy * (dt / 1000);
-      h.x   += h.vx * (dt / 1000);
-      h.rot += h.vr * (dt / 1000);
-      if (h.life <= 0) this.hearts.splice(i, 1);
+    // Vorhandene Partikel bewegen + verblassen (auch nach Effektende)
+    for (let i = this.particles.length - 1; i >= 0; i--) {
+      const p = this.particles[i];
+      p.life -= dt;
+      p.y   += p.vy * (dt / 1000);
+      p.x   += p.vx * (dt / 1000);
+      p.rot += p.vr * (dt / 1000);
+      if (p.life <= 0) this.particles.splice(i, 1);
     }
   }
 
-  _spawnHeart() {
-    const COLORS = ['#ff2d5e', '#ff5c8a', '#e11d3a'];
-    const cx     = this.x + CAR_W / 2;
-    const spread = CAR_W * 0.55;
+  _spawnParticle(kind) {
+    const cx      = this.x + CAR_W / 2;
     const maxLife = 900 + Math.random() * 400;
-    this.hearts.push({
+    if (kind === 'note') {
+      const COLORS = ['#a855f7', '#22d3ee', '#f472b6', '#facc15', '#4ade80'];
+      const GLYPHS = ['♪', '♫', '♬', '♩'];
+      const spread = CAR_W * 0.95;
+      this.particles.push({
+        kind:  'note',
+        x:     cx + (Math.random() - 0.5) * spread,
+        y:     PLAYER_Y + CAR_H * 0.3 + (Math.random() - 0.5) * CAR_H * 0.5,
+        vy:    -50 - Math.random() * 60,           // aufsteigen
+        vx:    (Math.random() - 0.5) * 90,         // seitlich wegschwirren
+        vr:    (Math.random() - 0.5) * 3,
+        rot:   (Math.random() - 0.5) * 0.8,
+        size:  20 + Math.random() * 16,
+        color: COLORS[Math.floor(Math.random() * COLORS.length)],
+        glyph: GLYPHS[Math.floor(Math.random() * GLYPHS.length)],
+        maxLife,
+        life:  maxLife,
+      });
+      return;
+    }
+    // heart (Lippenstift)
+    const COLORS = ['#ff2d5e', '#ff5c8a', '#e11d3a'];
+    const spread = CAR_W * 0.55;
+    this.particles.push({
+      kind:    'heart',
       x:       cx + (Math.random() - 0.5) * spread,
       y:       PLAYER_Y + CAR_H * 0.45 + Math.random() * 30,
       vy:      -60 - Math.random() * 50,          // aufsteigen
@@ -105,26 +153,36 @@ export class PlayerCar {
     });
   }
 
-  _renderHearts(ctx) {
-    if (this.hearts.length === 0) return;
+  _renderParticles(ctx) {
+    if (this.particles.length === 0) return;
     ctx.save();
     ctx.imageSmoothingEnabled = true;
-    for (const h of this.hearts) {
+    for (const p of this.particles) {
       ctx.save();
-      ctx.globalAlpha = Math.max(0, h.life / h.maxLife);
-      ctx.fillStyle   = h.color;
-      ctx.translate(h.x, h.y);
-      ctx.rotate(h.rot);
-      const s = h.size / 16;
-      ctx.scale(s, s);
-      // Herz-Pfad (Breite ~16, um 0 zentriert)
-      ctx.beginPath();
-      ctx.moveTo(0, 5);
-      ctx.bezierCurveTo(0, 1, -8, -1, -8, 5);
-      ctx.bezierCurveTo(-8, 10, -1, 13, 0, 16);
-      ctx.bezierCurveTo(1, 13, 8, 10, 8, 5);
-      ctx.bezierCurveTo(8, -1, 0, 1, 0, 5);
-      ctx.fill();
+      ctx.globalAlpha = Math.max(0, p.life / p.maxLife);
+      ctx.translate(p.x, p.y);
+      ctx.rotate(p.rot);
+      if (p.kind === 'note') {
+        ctx.fillStyle    = p.color;
+        ctx.shadowColor  = p.color;
+        ctx.shadowBlur   = 8;
+        ctx.font         = `bold ${p.size}px "Segoe UI Symbol", serif`;
+        ctx.textAlign    = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(p.glyph, 0, 0);
+      } else {
+        ctx.fillStyle = p.color;
+        const s = p.size / 16;
+        ctx.scale(s, s);
+        // Herz-Pfad (Breite ~16, um 0 zentriert)
+        ctx.beginPath();
+        ctx.moveTo(0, 5);
+        ctx.bezierCurveTo(0, 1, -8, -1, -8, 5);
+        ctx.bezierCurveTo(-8, 10, -1, 13, 0, 16);
+        ctx.bezierCurveTo(1, 13, 8, 10, 8, 5);
+        ctx.bezierCurveTo(8, -1, 0, 1, 0, 5);
+        ctx.fill();
+      }
       ctx.restore();
     }
     ctx.restore();
@@ -150,22 +208,29 @@ export class PlayerCar {
    */
   render(ctx, effects) {
     const y   = PLAYER_Y;
-    const cx  = this.x + CAR_W / 2;
+    const dx  = this.x + this.drunkOffset;   // Schlinger-Versatz (Bier)
+    const cx  = dx + CAR_W / 2;
     const cy  = y + CAR_H / 2;
 
-    // Welches Sprite? Lippenstift (überrascht) > Diskokugel (disco) > Joint (smoken) > normal
+    // Welches Sprite? Mikro (rappt) > Lippenstift > Diskokugel > Bier (trinken/übel) > Joint > normal
     let spriteObj = this.sprite;
-    if (effects?.isLipstick && this.spriteSurprised?.img) {
+    if (effects?.isMicro && this.spriteRap?.img) {
+      spriteObj = this.spriteRap;
+    } else if (effects?.isLipstick && this.spriteSurprised?.img) {
       spriteObj = this.spriteSurprised;
     } else if (effects?.isStar && this.spriteDisco?.img) {
       spriteObj = this.spriteDisco;
+    } else if (effects?.isDrunk && this.spriteDrink?.img) {
+      spriteObj = this.spriteDrink;
+    } else if (effects?.isSick && this.spriteSick?.img) {
+      spriteObj = this.spriteSick;
     } else if (effects?.isSmoking && this.spriteSmoken?.img) {
       spriteObj = this.spriteSmoken;
     }
     const spr = spriteObj?.img || null;
 
-    // Herz-Partikel hinter/um das Auto (Lippenstift-Effekt)
-    this._renderHearts(ctx);
+    // Partikel (Herzen/Noten) hinter/um das Auto
+    this._renderParticles(ctx);
 
     ctx.save();
     ctx.imageSmoothingEnabled = false;
@@ -180,7 +245,14 @@ export class PlayerCar {
     }
 
     // Glow als shadowBlur (dreht mit, kein Rechteck sichtbar)
-    if (effects?.isLipstick) {
+    if (effects?.isMicro) {
+      // Mikrofon-Glow: pulsierendes Violett ↔ Cyan (Bühnen-Vibe)
+      const t    = Date.now();
+      const hue  = 280 + Math.sin(t / 200) * 40;
+      const blur = 20  + Math.sin(t / 90) * 10;
+      ctx.shadowColor = `hsla(${hue}, 100%, 65%, 0.9)`;
+      ctx.shadowBlur  = blur;
+    } else if (effects?.isLipstick) {
       // Eigener Lippenstift-Glow: pulsierendes Rot ↔ Pink
       const t    = Date.now();
       const hue  = 340 + Math.sin(t / 300) * 12;
@@ -196,10 +268,10 @@ export class PlayerCar {
     }
 
     if (spr) {
-      ctx.drawImage(spr, this.x, y, CAR_W, CAR_H);
+      ctx.drawImage(spr, dx, y, CAR_W, CAR_H);
     } else {
       ctx.fillStyle = '#cc2244';
-      ctx.fillRect(this.x, y, CAR_W, CAR_H);
+      ctx.fillRect(dx, y, CAR_W, CAR_H);
     }
 
     ctx.restore();
@@ -226,12 +298,17 @@ function _removeBgHQ(img, targetW, targetH) {
   const sx   = (img.width  - side) / 2;
   const sy   = (img.height - side) / 2;
 
-  // BG-Removal auf voller (quadratischer) Auflösung für beste Qualität
+  // BG-Removal auf gedeckelter Arbeitsauflösung: erst klein zeichnen, dann
+  // Flood-Fill (billig). 400px Arbeitsgröße bei 200px Output = Qualitätsreserve.
+  const WORK_MAX = 400;
+  const work = Math.min(side, WORK_MAX);
   const oc   = document.createElement('canvas');
-  oc.width   = side;
-  oc.height  = side;
+  oc.width   = work;
+  oc.height  = work;
   const octx = oc.getContext('2d');
-  octx.drawImage(img, sx, sy, side, side, 0, 0, side, side);
+  octx.imageSmoothingEnabled = true;
+  octx.imageSmoothingQuality = 'high';
+  octx.drawImage(img, sx, sy, side, side, 0, 0, work, work);
   const id = octx.getImageData(0, 0, oc.width, oc.height);
   const d  = id.data;
   const w  = oc.width, h = oc.height;
@@ -304,6 +381,7 @@ function _getSprite(src, targetW, targetH) {
     const holder = { img: null };
     const image  = new Image();
     image.onload = () => { holder.img = _removeBgAndScale(image, targetW, targetH); };
+    image.onerror = () => console.warn(`[Traffic] Sprite nicht gefunden: ${src}`);
     image.src = src;
     _spriteCache[key] = holder;
   }
@@ -321,37 +399,81 @@ export class TrafficCar {
     this.y      = -this.h - 20;
     this.speed  = speed + (Math.random() - 0.5) * 40;
     this.sprite = _getSprite(type.src, type.w, type.h);
+    // Schockwelle (Mikrofon): Auto wird radial weggeschleudert
+    this.blasted = false;
+    this.blastVx = 0;
+    this.blastVy = 0;
+    this.spin    = 0;
+    this.angle   = 0;
   }
 
-  update(dt) {
-    this.y += this.speed * (dt / 1000);
+  /** Vom Spieler weg aus dem Bild schleudern (Mikrofon-Schockwelle). */
+  blast(px, py) {
+    const cx = this.x + this.w / 2;
+    const cy = this.y + this.h / 2;
+    let dx = cx - px;
+    let dy = cy - py;
+    const d = Math.hypot(dx, dy) || 1;
+    dx /= d; dy /= d;
+    const power  = 1900 + Math.random() * 700;
+    this.blastVx = dx * power;
+    this.blastVy = dy * power - 250;              // zusätzlicher Kick nach oben
+    this.spin    = (Math.random() - 0.5) * 14;    // rad/s Eigendrehung
+    this.blasted = true;
+  }
+
+  update(dt, speedScale = 1) {
+    if (this.blasted) {
+      this.x     += this.blastVx * (dt / 1000);
+      this.y     += this.blastVy * (dt / 1000);
+      this.angle += this.spin    * (dt / 1000);
+      return;
+    }
+    // speedScale koppelt vorhandene Autos an das aktuelle Welt-Tempo
+    // (z.B. Lippenstift-Boost), damit sie nicht relativ zurückfallen.
+    this.y += this.speed * speedScale * (dt / 1000);
   }
 
   isOffScreen() {
-    return this.y > CANVAS_H + 20;
+    return this.y > CANVAS_H + 40 ||
+           this.y < -this.h - 500 ||
+           this.x < -this.w - 500 ||
+           this.x > CANVAS_W + 500;
   }
 
   collidesWith(player) {
     const px = player.hitboxX;
-    const py = player.hitboxY;
+    const py = player.hitboxY + HITBOX_INSET_TOP;   // vorne/hinten verkleinert
+    const ph = player.h - HITBOX_INSET_TOP - HITBOX_INSET_BOTTOM;
     const tx = this.x + (this.w - this.hitW) / 2;
+    const th = this.h * TRAFFIC_HITBOX_FRAC;      // kürzer als das Sprite
+    const ty = this.y + (this.h - th) / 2;        // vertikal zentriert
     return (
       px < tx + this.hitW &&
       px + HITBOX_W > tx &&
-      py < this.y + this.h &&
-      py + player.h > this.y
+      py < ty + th &&
+      py + ph > ty
     );
   }
 
   render(ctx) {
     ctx.imageSmoothingEnabled = false;
     const spr = this.sprite?.img;
+    ctx.save();
+    if (this.blasted && this.angle) {
+      const cx = this.x + this.w / 2;
+      const cy = this.y + this.h / 2;
+      ctx.translate(cx, cy);
+      ctx.rotate(this.angle);
+      ctx.translate(-cx, -cy);
+    }
     if (spr) {
       ctx.drawImage(spr, this.x, this.y, this.w, this.h);
     } else {
       ctx.fillStyle = '#444';
       ctx.fillRect(this.x, this.y, this.w, this.h);
     }
+    ctx.restore();
   }
 }
 
