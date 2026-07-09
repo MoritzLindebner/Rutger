@@ -43,6 +43,7 @@ export class PlayerCar {
     this.spriteRap       = this._loadAndProcess('assets/sprites/cabrio-rap.jpeg');
     this.spriteDrink     = this._loadAndProcess('assets/sprites/cabrio-drink.jpeg');
     this.spriteSick      = this._loadAndProcess('assets/sprites/cabrio-sick.jpeg');
+    this.spriteMega      = this._loadAndProcess('assets/sprites/cabrio-million.jpeg');
   }
 
   _loadAndProcess(src) {
@@ -91,7 +92,7 @@ export class PlayerCar {
     }
 
     // Partikel emittieren: Herzen (Lippenstift) oder Musiknoten (Mikrofon)
-    const emit = effects?.isLipstick ? 'heart' : effects?.isMicro ? 'note' : null;
+    const emit = effects?.isLipstick ? 'heart' : (effects?.isMicro || effects?.isMega) ? 'note' : null;
     if (emit) {
       this.particleTimer += dt;
       const rate = emit === 'heart' ? 90 : 120;
@@ -212,9 +213,11 @@ export class PlayerCar {
     const cx  = dx + CAR_W / 2;
     const cy  = y + CAR_H / 2;
 
-    // Welches Sprite? Mikro (rappt) > Lippenstift > Diskokugel > Bier (trinken/übel) > Joint > normal
+    // Welches Sprite? Mega (3 Personen) > Mikro (rappt) > Lippenstift > Diskokugel > Bier > Joint > normal
     let spriteObj = this.sprite;
-    if (effects?.isMicro && this.spriteRap?.img) {
+    if (effects?.isMega && this.spriteMega?.img) {
+      spriteObj = this.spriteMega;
+    } else if (effects?.isMicro && this.spriteRap?.img) {
       spriteObj = this.spriteRap;
     } else if (effects?.isLipstick && this.spriteSurprised?.img) {
       spriteObj = this.spriteSurprised;
@@ -245,7 +248,14 @@ export class PlayerCar {
     }
 
     // Glow als shadowBlur (dreht mit, kein Rechteck sichtbar)
-    if (effects?.isMicro) {
+    if (effects?.isMega) {
+      // Goldener Feier-Glow (1-Mio-Meilenstein)
+      const t    = Date.now();
+      const hue  = 45 + Math.sin(t / 150) * 10;
+      const blur = 24 + Math.sin(t / 80) * 12;
+      ctx.shadowColor = `hsla(${hue}, 100%, 60%, 0.95)`;
+      ctx.shadowBlur  = blur;
+    } else if (effects?.isMicro) {
       // Mikrofon-Glow: pulsierendes Violett ↔ Cyan (Bühnen-Vibe)
       const t    = Date.now();
       const hue  = 280 + Math.sin(t / 200) * 40;

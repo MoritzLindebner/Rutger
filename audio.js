@@ -50,6 +50,16 @@ export const Audio = {
     sounds.bgMusic?.stop();
   },
 
+  pauseMusic() {
+    sounds.bgMusic?.pause();
+  },
+
+  resumeMusic() {
+    if (sounds.bgMusic && !sounds.bgMusic.playing()) {
+      sounds.bgMusic.play();
+    }
+  },
+
   stopAll() {
     for (const s of Object.values(sounds)) {
       s?.stop();

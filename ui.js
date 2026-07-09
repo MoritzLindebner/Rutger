@@ -11,8 +11,10 @@ export const UI = {
       gameover:       document.getElementById('gameover-screen'),
       leaderboard:    document.getElementById('leaderboard-screen'),
       username:       document.getElementById('username-screen'),
+      pause:          document.getElementById('pause-screen'),
       hud:            document.getElementById('hud'),
       scoreValue:     document.getElementById('score-value'),
+      milestoneFlash: document.getElementById('milestone-flash'),
       highscoreValue: document.getElementById('highscore-value'),
       finalScore:     document.getElementById('final-score'),
       finalHighscore: document.getElementById('final-highscore'),
@@ -110,9 +112,29 @@ export const UI = {
     return div.innerHTML;
   },
 
+  showPause() {
+    this.els.pause?.classList.remove('hidden');
+  },
+
+  hidePause() {
+    this.els.pause?.classList.add('hidden');
+  },
+
   _hideAll() {
-    ['menu', 'gameover', 'leaderboard', 'username'].forEach(k => this.els[k]?.classList.add('hidden'));
+    ['menu', 'gameover', 'leaderboard', 'username', 'pause'].forEach(k => this.els[k]?.classList.add('hidden'));
     this.els.hud?.classList.add('hidden');
+  },
+
+  // Meilenstein: Zahl einmal kurz groß aufleuchten lassen
+  flashMilestone(text) {
+    const el = this.els.milestoneFlash;
+    if (!el) return;
+    el.textContent = text;
+    el.classList.remove('hidden', 'play');
+    void el.offsetWidth;          // Reflow → Animation neu starten
+    el.classList.add('play');
+    clearTimeout(this._flashT);
+    this._flashT = setTimeout(() => el.classList.add('hidden'), 2400);
   },
 
   // ── HUD Updates ──────────────────────────────────────────────────────────

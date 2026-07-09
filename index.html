@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
   <title>Hit The Road Jack</title>
-  <link rel="stylesheet" href="style.css?v=25" />
+  <link rel="stylesheet" href="style.css?v=32" />
   <script src="https://cdnjs.cloudflare.com/ajax/libs/howler/2.2.4/howler.min.js"></script>
 </head>
 <body>
@@ -40,7 +40,7 @@
 
     <!-- Menu Screen -->
     <div id="menu-screen" class="screen hidden">
-      <img src="assets/sprites/menu-bg.png?v=25" alt="" class="menu-bg" />
+      <img src="assets/sprites/menu-bg.png?v=32" alt="" class="menu-bg" />
       <button id="btn-start" class="menu-btn menu-btn-play"></button>
       <button id="btn-leaderboard" class="menu-btn menu-btn-leaderboard"></button>
       <div id="btn-mainmenu" class="menu-btn menu-btn-mainmenu"></div>
@@ -80,8 +80,16 @@
       <button id="btn-retry" class="btn-primary">NOCHMAL</button>
     </div>
 
+    <!-- Pause Menü -->
+    <div id="pause-screen" class="screen hidden">
+      <h1 class="screen-title accent">PAUSE</h1>
+      <button id="btn-resume" class="btn-primary">WEITER</button>
+      <button id="btn-pause-menu" class="btn-primary">HAUPTMENÜ</button>
+    </div>
+
     <!-- HUD -->
     <div id="hud" class="hidden">
+      <button id="btn-pause" class="pause-btn" aria-label="Pause">❚❚</button>
       <div id="hud-top">
         <div id="hud-score">
           <span id="score-value">0</span>
@@ -100,14 +108,17 @@
         <span id="joint-badge" class="effect-badge joint hidden">🌿 HIGH</span>
       </div>
     </div>
+
+    <!-- Meilenstein-Flash (Zahl leuchtet einmal kurz groß auf) -->
+    <div id="milestone-flash" class="milestone-flash hidden"></div>
   </div>
 
-  <script type="module" src="firebase.js?v=25"></script>
-  <script type="module" src="audio.js?v=25"></script>
-  <script type="module" src="road.js?v=25"></script>
-  <script type="module" src="car.js?v=25"></script>
-  <script type="module" src="items.js?v=25"></script>
-  <script type="module" src="ui.js?v=25"></script>
-  <script type="module" src="game.js?v=25"></script>
+  <script type="module" src="firebase.js?v=32"></script>
+  <script type="module" src="audio.js?v=32"></script>
+  <script type="module" src="road.js?v=32"></script>
+  <script type="module" src="car.js?v=32"></script>
+  <script type="module" src="items.js?v=32"></script>
+  <script type="module" src="ui.js?v=32"></script>
+  <script type="module" src="game.js?v=32"></script>
 </body>
 </html>

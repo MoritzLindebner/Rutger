@@ -25,6 +25,7 @@ export const EFFECT_DURATION = {
   micro:      6000,  // Schockwelle: alle Autos aus dem Bild + Musiknoten
   beerDrunk:  6000,  // Bier Phase 1: betrunken (Schlingern + träge Lenkung)
   beerSick:   2500,  // Bier Phase 2: übel (nur Optik, kurz nach dem Effekt)
+  mega:      10000,  // 1-Mio-Meilenstein: 3. Person + Schockwelle bläst alle Autos weg
 };
 
 // ── Sprite-Loader ──────────────────────────────────────────────────────────
@@ -293,6 +294,7 @@ export class EffectManager {
     this.microTime   = 0;   // Mikrofon: Schockwelle wirft alle Autos aus dem Bild
     this.beerDrunk   = 0;   // Bier Phase 1: betrunken (Handicap)
     this.beerSick    = 0;   // Bier Phase 2: übel (Optik)
+    this.megaTime    = 0;   // 1-Mio-Meilenstein: Mega-Schockwelle + 3. Person
     this.multiplier  = 1;
     this.multTime    = 0;
     this._blurVal    = 0;
@@ -324,10 +326,14 @@ export class EffectManager {
         this.beerDrunk = EFFECT_DURATION.beerDrunk;
         this.beerSick  = 0; // startet wenn betrunken endet
         break;
+      case 'mega':
+        this.megaTime = EFFECT_DURATION.mega;
+        break;
     }
   }
 
-  get isInvincible()   { return this.starTime > 0 || this.lipTime > 0 || this.microTime > 0; }
+  get isInvincible()   { return this.starTime > 0 || this.lipTime > 0 || this.microTime > 0 || this.megaTime > 0; }
+  get isMega()         { return this.megaTime > 0; }
   get isStar()         { return this.starTime > 0; }
   get isLipstick()     { return this.lipTime > 0; }
   get isMicro()        { return this.microTime > 0; }
@@ -359,6 +365,7 @@ export class EffectManager {
       }
     }
     if (this.beerSick > 0) this.beerSick = Math.max(0, this.beerSick - dt);
+    if (this.megaTime > 0) this.megaTime = Math.max(0, this.megaTime - dt);
 
     // Joint Phase 1 → Phase 2
     if (this.jointSmoke > 0) {
@@ -398,6 +405,7 @@ export class EffectManager {
     this.microTime  = 0;
     this.beerDrunk  = 0;
     this.beerSick   = 0;
+    this.megaTime   = 0;
     this.multiplier = 1;
     this.multTime   = 0;
     canvas.style.filter    = '';

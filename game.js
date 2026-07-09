@@ -14,9 +14,11 @@ const SPEED_ACCEL     = 8;     // px/s² Beschleunigung
 const BASE_SCORE_RATE = 60;    // Punkte/s bei Basis-Geschwindigkeit
 const LIPSTICK_SPEED  = 1400;  // effektives Tempo während Lippenstift-Effekt (deutlich über MAX_SPEED)
 const MICRO_BLAST_RADIUS = 240; // Mikrofon: Distanz (px) ab der ein Auto weggeschleudert wird
+const MILESTONE_STEP     = 100000;  // Meilenstein-Effekt alle 100.000 …
+const MILESTONE_MAX      = 1000000; // … bis einschließlich 1 Mio
 
 // ── States ─────────────────────────────────────────────────────────────────
-const STATE = { MENU: 'MENU', PLAYING: 'PLAYING', GAME_OVER: 'GAME_OVER' };
+const STATE = { MENU: 'MENU', PLAYING: 'PLAYING', PAUSED: 'PAUSED', GAME_OVER: 'GAME_OVER' };
 
 // ── Canvas ─────────────────────────────────────────────────────────────────
 const canvas = document.getElementById('game-canvas');
@@ -46,6 +48,7 @@ let effects     = null;
 let speed       = BASE_SPEED;
 let displaySpeed = BASE_SPEED; // effektives Tempo (inkl. Boost) für Anzeige/Logik
 let score       = 0;
+let nextMilestone = MILESTONE_STEP; // nächster 100k-Meilenstein
 let highScore   = parseInt(localStorage.getItem('htrj_highscore') || '0', 10);
 
 // ── Input ───────────────────────────────────────────────────────────────────
@@ -55,6 +58,12 @@ let lastLaneInput = 0; // Cooldown um doppel-inputs zu verhindern
 function setupInput() {
   // Tastatur
   window.addEventListener('keydown', e => {
+    // Pause umschalten (Escape / P) – funktioniert im Spiel und in Pause
+    if (e.code === 'Escape' || e.code === 'KeyP') {
+      if (state === STATE.PLAYING) pauseGame();
+      else if (state === STATE.PAUSED) resumeGame();
+      return;
+    }
     if (state !== STATE.PLAYING) return;
     if (e.code === 'ArrowLeft'  || e.code === 'KeyA') tryChangeLane(-1);
     if (e.code === 'ArrowRight' || e.code === 'KeyD') tryChangeLane(1);
@@ -99,6 +108,15 @@ function setupUI() {
   document.getElementById('btn-leaderboard').addEventListener('click', () => {
     UI.showLeaderboard();
   });
+
+  // Pause-Menü
+  document.getElementById('btn-pause').addEventListener('click', pauseGame);
+  document.getElementById('btn-resume').addEventListener('click', resumeGame);
+  document.getElementById('btn-pause-menu').addEventListener('click', () => {
+    state = STATE.MENU;
+    Audio.stopMusic();
+    UI.showMenu();
+  });
   document.getElementById('btn-lb-close').addEventListener('click', () => {
     UI.hideLeaderboard();
   });
@@ -141,6 +159,7 @@ function initGame() {
   speed       = BASE_SPEED;
   displaySpeed = BASE_SPEED;
   score       = 0;
+  nextMilestone = MILESTONE_STEP;
 }
 
 // ── Spiel starten (nur State wechseln, alles ist schon bereit) ───────────────
@@ -156,6 +175,21 @@ function startGame() {
   UI.showHUD();
   UI.updateScore(0, highScore);
   UI.updateEffects(effects);
+}
+
+// ── Pause ────────────────────────────────────────────────────────────────────
+function pauseGame() {
+  if (state !== STATE.PLAYING) return;
+  state = STATE.PAUSED;
+  Audio.pauseMusic();
+  UI.showPause();
+}
+
+function resumeGame() {
+  if (state !== STATE.PAUSED) return;
+  state = STATE.PLAYING;
+  UI.hidePause();
+  Audio.resumeMusic();
 }
 
 // ── Update ───────────────────────────────────────────────────────────────────
@@ -187,6 +221,17 @@ function update(dt) {
   UI.updateScore(score, highScore);
   UI.updateEffects(effects);
 
+  // Meilenstein bei jedem 100.000er (bis 1 Mio): 3. Person + 10s Mega-Schockwelle,
+  // keine Item-Spawns, und die erreichte Zahl leuchtet kurz groß auf (UI.flashMilestone).
+  if (nextMilestone <= MILESTONE_MAX && score >= nextMilestone) {
+    const reached = nextMilestone;
+    nextMilestone += MILESTONE_STEP;
+    effects.activate('mega');
+    UI.flashMilestone(reached.toLocaleString('de-DE'));
+    spawnShockwave(playerCar.x + playerCar.w / 2, PLAYER_Y + playerCar.h / 2, 950, true);
+    Audio.play('star');
+  }
+
   // Gegenverkehr spawnen
   // Autos zur Basis-Geschwindigkeit spawnen; der Boost (Lippenstift) wird einheitlich
   // über speedScale im Update angewandt – so beschleunigen alte wie neue Autos gemeinsam.
@@ -204,7 +249,7 @@ function update(dt) {
   for (let i = trafficCars.length - 1; i >= 0; i--) {
     const car = trafficCars[i];
 
-    if (effects.isMicro && !car.blasted) {
+    if ((effects.isMicro || effects.isMega) && !car.blasted) {
       const ccx = car.x + car.w / 2;
       const ccy = car.y + car.h / 2;
       if (Math.hypot(ccx - playerCX, ccy - playerCY) <= MICRO_BLAST_RADIUS) {
@@ -224,8 +269,11 @@ function update(dt) {
   }
 
   // Items spawnen (Basis-Geschwindigkeit; Boost via worldScale im Update)
-  const newItem = itemSpawner.update(dt, speed, trafficCars);
-  if (newItem) items.push(newItem);
+  // Während des Meilenstein-Bonus keine neuen Items spawnen.
+  if (!effects.isMega) {
+    const newItem = itemSpawner.update(dt, speed, trafficCars);
+    if (newItem) items.push(newItem);
+  }
 
   // Items updaten + Pickup
   for (let i = items.length - 1; i >= 0; i--) {
@@ -315,7 +363,7 @@ function triggerGameOver() {
 function render() {
   ctx.clearRect(0, 0, CANVAS_W, CANVAS_H);
 
-  if (road && (state === STATE.PLAYING || state === STATE.GAME_OVER)) {
+  if (road && (state === STATE.PLAYING || state === STATE.PAUSED || state === STATE.GAME_OVER)) {
     road.render(ctx, effects);
 
     // Items (hinter Autos)
@@ -412,6 +460,7 @@ const PRELOAD_ASSETS = [
   'assets/sprites/cabrio-rap.jpeg',
   'assets/sprites/cabrio-drink.jpeg',
   'assets/sprites/cabrio-sick.jpeg',
+  'assets/sprites/cabrio-million.jpeg',
   'assets/sprites/joint.png',
   'assets/sprites/diskokugel.png',
   'assets/sprites/lipstick.jpeg',
