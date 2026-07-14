@@ -1,0 +1,5 @@
+# Große Rohaudio-Datei nicht ins Repo/Hosting (MP3 wird ausgeliefert)
+*.wav
+
+# Claude Code lokale Einstellungen
+.claude/

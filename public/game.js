@@ -1,0 +1,558 @@
+// game.js – Hit The Road Jack – Endless Runner
+
+import { Audio }          from './audio.js';
+import { Road, CANVAS_W, CANVAS_H } from './road.js';
+import { PlayerCar, TrafficCar, TrafficSpawner, PLAYER_Y } from './car.js';
+import { Item, ItemSpawner, EffectManager } from './items.js';
+import { UI } from './ui.js';
+import { initFirebase, getUsername, setUsername, submitScore, fetchOwnName } from './firebase.js';
+
+// ── Konstanten ─────────────────────────────────────────────────────────────
+const BASE_SPEED      = 300;   // px/s beim Start
+const MAX_SPEED       = 900;   // px/s Maximum
+const SPEED_ACCEL     = 8;     // px/s² Beschleunigung
+const BASE_SCORE_RATE = 60;    // Punkte/s bei Basis-Geschwindigkeit
+const LIPSTICK_SPEED  = 1400;  // effektives Tempo während Lippenstift-Effekt (deutlich über MAX_SPEED)
+const MICRO_BLAST_RADIUS = 240; // Mikrofon: Distanz (px) ab der ein Auto weggeschleudert wird
+const MILESTONE_STEP     = 100000;  // Meilenstein-Effekt alle 100.000 …
+const MILESTONE_MAX      = 1000000; // … bis einschließlich 1 Mio
+
+// ── States ─────────────────────────────────────────────────────────────────
+const STATE = { MENU: 'MENU', PLAYING: 'PLAYING', PAUSED: 'PAUSED', GAME_OVER: 'GAME_OVER' };
+
+// ── Canvas ─────────────────────────────────────────────────────────────────
+const canvas = document.getElementById('game-canvas');
+const ctx    = canvas.getContext('2d');
+canvas.width  = CANVAS_W;
+canvas.height = CANVAS_H;
+
+// Anzeigegröße von Container & Canvas an die dynamische Höhe koppeln (Vollbild-Skalierung)
+const gameContainer = document.getElementById('game-container');
+gameContainer.style.width  = `${CANVAS_W}px`;
+gameContainer.style.height = `${CANVAS_H}px`;
+canvas.style.width  = `${CANVAS_W}px`;
+canvas.style.height = `${CANVAS_H}px`;
+
+// ── Game State ──────────────────────────────────────────────────────────────
+let state       = STATE.MENU;
+let road        = null;
+let playerCar   = null;
+let trafficCars = [];
+let items       = [];
+let popups      = [];   // aufsteigende Punkte-Einblendungen (z.B. Joint +3.000)
+let shockwaves  = [];   // expandierende Ringe (Mikrofon-Schockwelle)
+let lastShockwave = 0;  // Zeitstempel des letzten Rings (Cooldown gegen Verklumpen)
+let spawner     = null;
+let itemSpawner = null;
+let effects     = null;
+let speed       = BASE_SPEED;
+let displaySpeed = BASE_SPEED; // effektives Tempo (inkl. Boost) für Anzeige/Logik
+let score       = 0;
+let nextMilestone = MILESTONE_STEP; // nächster 100k-Meilenstein
+let highScore   = parseInt(localStorage.getItem('htrj_highscore') || '0', 10);
+
+// ── Input ───────────────────────────────────────────────────────────────────
+let touchStartX = null;
+let lastLaneInput = 0; // Cooldown um doppel-inputs zu verhindern
+
+function setupInput() {
+  // Tastatur
+  window.addEventListener('keydown', e => {
+    // Pause umschalten (Escape / P) – funktioniert im Spiel und in Pause
+    if (e.code === 'Escape' || e.code === 'KeyP') {
+      if (state === STATE.PLAYING) pauseGame();
+      else if (state === STATE.PAUSED) resumeGame();
+      return;
+    }
+    if (state !== STATE.PLAYING) return;
+    if (e.code === 'ArrowLeft'  || e.code === 'KeyA') tryChangeLane(-1);
+    if (e.code === 'ArrowRight' || e.code === 'KeyD') tryChangeLane(1);
+  });
+
+  // Touch – Swipe
+  canvas.addEventListener('touchstart', e => {
+    e.preventDefault();
+    touchStartX = e.touches[0].clientX;
+  }, { passive: false });
+
+  canvas.addEventListener('touchend', e => {
+    e.preventDefault();
+    if (touchStartX === null) return;
+    const dx = e.changedTouches[0].clientX - touchStartX;
+    touchStartX = null;
+
+    if (state === STATE.PLAYING && Math.abs(dx) > 40) {
+      tryChangeLane(dx > 0 ? 1 : -1);
+    }
+  }, { passive: false });
+}
+
+function tryChangeLane(dir) {
+  const now = Date.now();
+  if (now - lastLaneInput < 150) return; // 150ms Cooldown
+  lastLaneInput = now;
+  playerCar.changeLane(dir);
+}
+
+// ── UI-Buttons ──────────────────────────────────────────────────────────────
+let pendingScore = 0;
+let recoveredName = ''; // aus der Cloud geholter Name für den Prompt-Prefill
+
+function setupUI() {
+  UI.init();
+
+  document.getElementById('btn-start').addEventListener('click', onStartPressed);
+  document.getElementById('btn-legend-start').addEventListener('click', startGame);
+  document.getElementById('btn-retry').addEventListener('click', () => {
+    state = STATE.MENU;
+    UI.showMenu();
+  });
+  document.getElementById('btn-leaderboard').addEventListener('click', () => {
+    UI.showLeaderboard();
+  });
+
+  // Pause-Menü
+  document.getElementById('btn-pause').addEventListener('click', pauseGame);
+  document.getElementById('btn-resume').addEventListener('click', resumeGame);
+  document.getElementById('btn-pause-menu').addEventListener('click', () => {
+    state = STATE.MENU;
+    Audio.stopMusic();
+    UI.showMenu();
+  });
+  document.getElementById('btn-lb-close').addEventListener('click', () => {
+    UI.hideLeaderboard();
+  });
+
+  // Username-Prompt: OK-Button + Enter
+  document.getElementById('btn-username-ok').addEventListener('click', handleUsernameSubmit);
+  document.getElementById('username-input').addEventListener('keydown', e => {
+    if (e.key === 'Enter') handleUsernameSubmit();
+  });
+}
+
+async function handleUsernameSubmit() {
+  const input = document.getElementById('username-input');
+  const name = input.value.trim();
+  if (!name) return;
+
+  await setUsername(name);
+  UI.hideUsernamePrompt();
+
+  // Jetzt den ausstehenden Score submitten
+  if (pendingScore > 0) {
+    submitScore(pendingScore);
+  }
+
+  UI.showGameOver(score, highScore, pendingScore >= Math.floor(highScore) && pendingScore > 0);
+}
+
+// ── Spiel vorinitialisieren (während Menü läuft) ─────────────────────────────
+function initGame() {
+  road        = new Road();
+  playerCar   = new PlayerCar();
+  trafficCars = [];
+  items       = [];
+  popups      = [];
+  shockwaves  = [];
+  lastShockwave = 0;
+  spawner     = new TrafficSpawner();
+  itemSpawner = new ItemSpawner();
+  effects     = new EffectManager();
+  speed       = BASE_SPEED;
+  displaySpeed = BASE_SPEED;
+  score       = 0;
+  nextMilestone = MILESTONE_STEP;
+}
+
+// Erster „Spielen"-Klick pro Session → Item-Legende, danach direkt starten
+let legendShown = false;
+function onStartPressed() {
+  if (!legendShown) {
+    legendShown = true;
+    UI.showLegend();
+  } else {
+    startGame();
+  }
+}
+
+// ── Spiel starten (nur State wechseln, alles ist schon bereit) ───────────────
+function startGame() {
+  // Reset falls es ein Retry ist
+  initGame();
+  effects.reset(canvas);
+
+  // Musik starten (bereits geladen weil Howler bei init vorlädt)
+  Audio.startMusic();
+
+  state = STATE.PLAYING;
+  UI.showHUD();
+  UI.updateScore(0, highScore);
+  UI.updateEffects(effects);
+}
+
+// ── Pause ────────────────────────────────────────────────────────────────────
+function pauseGame() {
+  if (state !== STATE.PLAYING) return;
+  state = STATE.PAUSED;
+  Audio.pauseMusic();
+  UI.showPause();
+}
+
+function resumeGame() {
+  if (state !== STATE.PAUSED) return;
+  state = STATE.PLAYING;
+  UI.hidePause();
+  Audio.resumeMusic();
+}
+
+// ── Update ───────────────────────────────────────────────────────────────────
+function update(dt) {
+  // Im Menü kein Road-Update – Sprite-Hintergrund
+  if (state === STATE.MENU) return;
+
+  if (state !== STATE.PLAYING) return;
+
+  // Geschwindigkeit erhöhen
+  speed = Math.min(MAX_SPEED, speed + SPEED_ACCEL * (dt / 1000));
+
+  // Effektives Tempo: während Lippenstift-Effekt fast Vollgas
+  const effSpeed = effects.isLipstick ? Math.max(speed, LIPSTICK_SPEED) : speed;
+  displaySpeed = effSpeed;
+
+  // Straße scrollen
+  road.update(dt, effSpeed);
+
+  // Spielerauto
+  playerCar.update(dt, effects);
+
+  // Effekte
+  effects.update(dt, canvas);
+
+  // Score
+  score += BASE_SCORE_RATE * effects.totalMultiplier * (effSpeed / BASE_SPEED) * (dt / 1000);
+  if (score > highScore) highScore = score;
+  UI.updateScore(score, highScore);
+  UI.updateEffects(effects);
+
+  // Meilenstein bei jedem 100.000er (bis 1 Mio): 3. Person + 10s Mega-Schockwelle,
+  // keine Item-Spawns, und die erreichte Zahl leuchtet kurz groß auf (UI.flashMilestone).
+  if (nextMilestone <= MILESTONE_MAX && score >= nextMilestone) {
+    const reached = nextMilestone;
+    nextMilestone += MILESTONE_STEP;
+    effects.activate('mega');
+    UI.flashMilestone(reached.toLocaleString('de-DE'));
+    spawnShockwave(playerCar.x + playerCar.w / 2, PLAYER_Y + playerCar.h / 2, 950, true);
+    Audio.play('star');
+  }
+
+  // Gegenverkehr spawnen
+  // Autos zur Basis-Geschwindigkeit spawnen; der Boost (Lippenstift) wird einheitlich
+  // über speedScale im Update angewandt – so beschleunigen alte wie neue Autos gemeinsam.
+  const newCar = spawner.update(dt, speed);
+  if (newCar) trafficCars.push(newCar);
+
+  const worldScale = effSpeed / speed;   // 1 normal, >1 während Lippenstift-Boost
+
+  // Mikrofon-Schockwelle: Autos dürfen nah rankommen und werden erst innerhalb
+  // von MICRO_BLAST_RADIUS weggeschleudert – so „feuert" die Welle mehrfach übers Effekt.
+  const playerCX = playerCar.x + playerCar.w / 2;
+  const playerCY = PLAYER_Y + playerCar.h / 2;
+
+  // Gegenverkehr updaten + Kollision
+  for (let i = trafficCars.length - 1; i >= 0; i--) {
+    const car = trafficCars[i];
+
+    if ((effects.isMicro || effects.isMega) && !car.blasted) {
+      const ccx = car.x + car.w / 2;
+      const ccy = car.y + car.h / 2;
+      if (Math.hypot(ccx - playerCX, ccy - playerCY) <= MICRO_BLAST_RADIUS) {
+        car.blast(playerCX, playerCY);
+        spawnShockwave(playerCX, playerCY, 700, false); // Puls mit Cooldown
+      }
+    }
+
+    car.update(dt, worldScale);
+
+    if (!effects.isInvincible && car.collidesWith(playerCar)) {
+      triggerGameOver();
+      return;
+    }
+
+    if (car.isOffScreen()) trafficCars.splice(i, 1);
+  }
+
+  // Items spawnen (Basis-Geschwindigkeit; Boost via worldScale im Update)
+  // Während des Meilenstein-Bonus keine neuen Items spawnen.
+  if (!effects.isMega) {
+    const newItem = itemSpawner.update(dt, speed, trafficCars);
+    if (newItem) items.push(newItem);
+  }
+
+  // Items updaten + Pickup
+  for (let i = items.length - 1; i >= 0; i--) {
+    const item = items[i];
+    item.update(dt, worldScale);
+
+    if (!item.collected && item.collidesWith(playerCar)) {
+      item.collect();
+      effects.activate(item.type);
+      if (item.type === 'joint') {
+        score += 5000;
+        spawnPopup(item.x + item.w / 2, item.y + item.h / 2, `+${(5000).toLocaleString('de-DE')}`, '#00e676');
+      }
+      if (item.type === 'beer') {
+        score += 5000;
+        spawnPopup(item.x + item.w / 2, item.y + item.h / 2, `+${(5000).toLocaleString('de-DE')}`, '#c9a66b');
+      }
+      if (item.type === 'micro') {
+        // Signatur-Puls beim Einsammeln (größer, ohne Cooldown-Sperre)
+        spawnShockwave(playerCX, playerCY, 950, true);
+      }
+      Audio.play(item.type === 'star' ? 'star' : item.type === 'joint' ? 'joint' : 'collect');
+    }
+
+    // Entfernen wenn Animation fertig oder außerhalb
+    if (item.isOffScreen() || (item.collected && item.animT > 500)) {
+      items.splice(i, 1);
+    }
+  }
+
+  // Punkte-Einblendungen aufsteigen lassen + ausfaden
+  for (let i = popups.length - 1; i >= 0; i--) {
+    const p = popups[i];
+    p.life -= dt;
+    p.y    -= 55 * (dt / 1000);
+    if (p.life <= 0) popups.splice(i, 1);
+  }
+
+  // Schockwellen-Ringe expandieren + ausfaden
+  for (let i = shockwaves.length - 1; i >= 0; i--) {
+    const sw = shockwaves[i];
+    sw.life -= dt;
+    if (sw.life <= 0) shockwaves.splice(i, 1);
+  }
+}
+
+function spawnPopup(x, y, text, color) {
+  popups.push({ x, y, text, color, life: 1100, maxLife: 1100 });
+}
+
+// Schockwellen-Ring. force=true umgeht den Cooldown (Signatur-Puls beim Einsammeln);
+// sonst nur ein Ring alle 200ms, damit gleichzeitige Blasts nicht verklumpen.
+function spawnShockwave(x, y, maxR = 700, force = false) {
+  const now = Date.now();
+  if (!force && now - lastShockwave < 200) return;
+  lastShockwave = now;
+  shockwaves.push({ x, y, life: 650, maxLife: 650, maxR });
+}
+
+function triggerGameOver() {
+  state = STATE.GAME_OVER;
+  Audio.stopMusic();
+  Audio.play('crash');
+  effects.reset(canvas);
+
+  const finalScore = Math.floor(score);
+  const isNewRecord = finalScore >= Math.floor(highScore) && finalScore > 0;
+
+  // Highscore lokal speichern
+  if (finalScore > 0) {
+    localStorage.setItem('htrj_highscore', String(Math.floor(highScore)));
+  }
+
+  // Wenn noch kein Username: Prompt zeigen, Score merken
+  if (!getUsername()) {
+    pendingScore = finalScore;
+    UI.showUsernamePrompt(recoveredName);
+    return;
+  }
+
+  // Username vorhanden: Score direkt submitten
+  submitScore(finalScore);
+  UI.showGameOver(score, highScore, isNewRecord);
+}
+
+// ── Render ───────────────────────────────────────────────────────────────────
+function render() {
+  ctx.clearRect(0, 0, CANVAS_W, CANVAS_H);
+
+  if (road && (state === STATE.PLAYING || state === STATE.PAUSED || state === STATE.GAME_OVER)) {
+    road.render(ctx, effects);
+
+    // Items (hinter Autos)
+    for (const item of items) item.render(ctx);
+
+    // Gegenverkehr (während Blur: ausgeblendet)
+    ctx.save();
+    ctx.globalAlpha = effects ? effects.trafficOpacity : 1;
+    for (const car of trafficCars) car.render(ctx);
+    ctx.restore();
+
+    // Schockwellen-Ringe (Mikrofon) – unter dem Auto hervorlaufend
+    for (const sw of shockwaves) {
+      const t = 1 - sw.life / sw.maxLife;   // 0→1
+      const r = t * sw.maxR;
+      const a = Math.max(0, sw.life / sw.maxLife);
+      ctx.save();
+      ctx.globalAlpha = a * 0.8;
+      ctx.lineWidth   = 14 * (1 - t) + 3;
+      ctx.strokeStyle = `hsla(${280 + t * 60}, 100%, 65%, 1)`;
+      ctx.shadowColor = ctx.strokeStyle;
+      ctx.shadowBlur  = 20;
+      ctx.beginPath();
+      ctx.arc(sw.x, sw.y, r, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.restore();
+    }
+
+    // Spielerauto
+    playerCar.render(ctx, effects);
+
+    // Punkte-Einblendungen (über allem)
+    for (const p of popups) {
+      const a = Math.max(0, p.life / p.maxLife);
+      ctx.save();
+      ctx.globalAlpha  = a;
+      ctx.fillStyle    = p.color;
+      ctx.font         = 'bold 30px Courier New';
+      ctx.textAlign    = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.shadowColor  = p.color;
+      ctx.shadowBlur   = 8;
+      ctx.fillText(p.text, p.x, p.y);
+      ctx.restore();
+    }
+
+    // Geschwindigkeitsanzeige (klein, unten)
+    ctx.fillStyle = 'rgba(255,255,255,0.2)';
+    ctx.font      = '10px Courier New';
+    ctx.textAlign = 'right';
+    ctx.fillText(`${Math.floor(displaySpeed)} km/h`, CANVAS_W - 12, CANVAS_H - 12);
+  }
+}
+
+// ── Game Loop ────────────────────────────────────────────────────────────────
+let lastTimestamp = 0;
+
+function gameLoop(timestamp) {
+  const dt = Math.min(timestamp - lastTimestamp, 100);
+  lastTimestamp = timestamp;
+
+  // rAF zuerst planen + update/render kapseln: eine einzelne Frame-Exception
+  // darf die Loop nie dauerhaft killen (sonst friert das Spiel ein, Musik läuft weiter).
+  requestAnimationFrame(gameLoop);
+
+  try {
+    update(dt);
+    render();
+  } catch (e) {
+    console.error('[gameLoop] Frame-Fehler:', e);
+  }
+}
+
+// ── Responsive Scaling ───────────────────────────────────────────────────────
+function scaleGame() {
+  const container = document.getElementById('game-container');
+  const vh = window.innerHeight;
+  const vw = window.innerWidth;
+  const scaleX = vw / CANVAS_W;
+  const scaleY = vh / CANVAS_H;
+  const scale  = Math.min(scaleX, scaleY);
+  const scaledH = CANVAS_H * scale;
+  const offsetY = Math.max(0, (vh - scaledH) / 2);
+  container.style.transform = `translate(0, ${offsetY}px) scale(${scale})`;
+}
+
+// ── Preloader ─────────────────────────────────────────────────────────────────
+const PRELOAD_ASSETS = [
+  'assets/sprites/menu-bg.png',
+  'assets/sprites/cabrio.png',
+  'assets/sprites/cabrio-smoken.png',
+  'assets/sprites/cabrio-surprised.jpeg',
+  'assets/sprites/cabrio-disco.jpeg',
+  'assets/sprites/cabrio-rap.jpeg',
+  'assets/sprites/cabrio-drink.jpeg',
+  'assets/sprites/cabrio-sick.jpeg',
+  'assets/sprites/cabrio-million.jpeg',
+  'assets/sprites/joint.png',
+  'assets/sprites/diskokugel.png',
+  'assets/sprites/lipstick.jpeg',
+  'assets/sprites/x2.jpeg',
+  'assets/sprites/microphone.jpeg',
+  'assets/sprites/beer.jpeg',
+  'assets/sprites/traffic-blue.png',
+  'assets/sprites/traffic-red.png',
+  'assets/sprites/traffic-orange.png',
+  'assets/sprites/traffic-taxi.png',
+  'assets/sprites/traffic-firetruck.png',
+  'assets/sprites/traffic-pickup.png',
+];
+
+function preloadAssets(onDone) {
+  const bar     = document.getElementById('loading-bar');
+  const label   = document.getElementById('loading-label');
+  const total   = PRELOAD_ASSETS.length;
+  let   loaded  = 0;
+
+  function onProgress() {
+    loaded++;
+    const pct = Math.round((loaded / total) * 100);
+    bar.style.width   = `${pct}%`;
+    label.textContent = `${pct}%`;
+    if (loaded >= total) {
+      setTimeout(onDone, 200); // kurze Pause damit 100% sichtbar ist
+    }
+  }
+
+  for (const src of PRELOAD_ASSETS) {
+    const img = new Image();
+    img.onload  = onProgress;
+    img.onerror = onProgress; // trotzdem weitermachen wenn eine Datei fehlt
+    img.src     = src;
+  }
+}
+
+// ── Boot ─────────────────────────────────────────────────────────────────────
+function bootGame() {
+  const container = document.getElementById('game-container');
+  container.classList.remove('hidden');
+
+  scaleGame();
+  window.addEventListener('resize', scaleGame);
+  setupInput();
+  setupUI();
+
+  // Firebase sofort starten (Auth läuft im Hintergrund)
+  initFirebase();
+
+  // Fehlt der Name lokal (z. B. Speicher geleert), aber die anonyme Identität
+  // lebt noch: Namen aus der Cloud holen, um den Prompt vorzufüllen.
+  if (!getUsername()) {
+    fetchOwnName().then(name => { if (name) recoveredName = name; });
+  }
+
+  preloadAssets(() => {
+    initGame();
+    document.getElementById('loading-screen').classList.add('hidden');
+    UI.showMenu();
+  });
+  requestAnimationFrame(gameLoop);
+}
+
+window.addEventListener('DOMContentLoaded', () => {
+  const consentScreen = document.getElementById('consent-screen');
+
+  // Consent schon akzeptiert?
+  if (localStorage.getItem('htrj_consent') === '1') {
+    consentScreen.classList.add('hidden');
+    bootGame();
+    return;
+  }
+
+  // Auf OK warten
+  document.getElementById('btn-consent').addEventListener('click', () => {
+    localStorage.setItem('htrj_consent', '1');
+    consentScreen.classList.add('hidden');
+    bootGame();
+  });
+});

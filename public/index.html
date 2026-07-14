@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
+  <title>Hit The Road Jack</title>
+  <link rel="stylesheet" href="style.css?v=32" />
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/howler/2.2.4/howler.min.js"></script>
+</head>
+<body>
+  <!-- Consent Banner (vor allem anderen) -->
+  <div id="consent-screen">
+    <div class="consent-box">
+      <p class="consent-text">
+        This game saves your name and score on a server.<br>
+        No other data is collected.
+      </p>
+      <p class="consent-text consent-de">
+        Dieses Spiel speichert deinen Namen und Score auf einem Server.<br>
+        Es werden keine weiteren Daten erhoben.
+      </p>
+      <a href="privacy.html" target="_blank" class="consent-link">Privacy Policy / Datenschutz</a>
+      <button id="btn-consent" class="btn-primary">OK</button>
+    </div>
+  </div>
+  <!-- Bereits zugestimmt? Banner synchron ausblenden, bevor gezeichnet wird (kein Aufblitzen). -->
+  <script>try{if(localStorage.getItem('htrj_consent')==='1'){document.getElementById('consent-screen').classList.add('hidden');}}catch(e){}</script>
+
+  <div id="game-container" class="hidden">
+    <canvas id="game-canvas"></canvas>
+
+    <!-- Loading Screen -->
+    <div id="loading-screen" class="screen">
+      <h1 class="screen-title accent">HIT THE ROAD JACK</h1>
+      <div id="loading-bar-wrap">
+        <div id="loading-bar"></div>
+      </div>
+      <p id="loading-label" class="hint">Wird geladen...</p>
+    </div>
+
+    <!-- Menu Screen -->
+    <div id="menu-screen" class="screen hidden">
+      <img src="assets/sprites/menu-bg.png?v=32" alt="" class="menu-bg" />
+      <button id="btn-start" class="menu-btn menu-btn-play"></button>
+      <button id="btn-leaderboard" class="menu-btn menu-btn-leaderboard"></button>
+      <div id="btn-mainmenu" class="menu-btn menu-btn-mainmenu"></div>
+      <a href="privacy.html" target="_blank" class="menu-privacy-link">Impressum & Datenschutz</a>
+    </div>
+
+    <!-- Item-Legende (einmal pro Session beim ersten Spielstart) -->
+    <div id="legend-screen" class="screen hidden">
+      <div class="legend-panel">
+        <h2 class="lb-title">DIE ITEMS</h2>
+        <ul class="legend-list">
+          <li class="legend-row"><span class="legend-icon"><img class="legend-sprite" data-sprite="star" alt=""></span><span class="legend-text"><b>Diskokugel</b>Unbesiegbar – fahr durch alles</span></li>
+          <li class="legend-row"><span class="legend-icon"><img class="legend-sprite" data-sprite="joint" alt=""></span><span class="legend-text"><b>Joint</b>Sicht verschwimmt, dafür ×2 Punkte</span></li>
+          <li class="legend-row"><span class="legend-icon"><img class="legend-sprite" data-sprite="x2" alt=""></span><span class="legend-text"><b>×2</b>Verdoppelt deine Punkte</span></li>
+          <li class="legend-row"><span class="legend-icon"><img class="legend-sprite" data-sprite="lipstick" alt=""></span><span class="legend-text"><b>Lippenstift</b>Vollgas & unbesiegbar, rote Bahn</span></li>
+          <li class="legend-row"><span class="legend-icon"><img class="legend-sprite" data-sprite="micro" alt=""></span><span class="legend-text"><b>Mikrofon</b>Schockwelle fegt alle Autos weg</span></li>
+          <li class="legend-row"><span class="legend-icon"><img class="legend-sprite" data-sprite="beer" alt=""></span><span class="legend-text"><b>Bier</b>Betrunken – das Auto schlingert</span></li>
+        </ul>
+        <button id="btn-legend-start" class="btn-primary">LOS GEHT'S!</button>
+      </div>
+    </div>
+
+    <!-- Leaderboard Overlay -->
+    <div id="leaderboard-screen" class="screen hidden">
+      <div class="lb-panel">
+        <h2 class="lb-title">LEADERBOARD</h2>
+        <div id="lb-list" class="lb-list"></div>
+        <button id="btn-lb-close" class="btn-primary">ZURÜCK</button>
+      </div>
+    </div>
+
+    <!-- Username Prompt -->
+    <div id="username-screen" class="screen hidden">
+      <div class="lb-panel">
+        <h2 class="lb-title">DEIN NAME</h2>
+        <input id="username-input" type="text" maxlength="12" placeholder="Name eingeben..." class="username-input" autocomplete="off" />
+        <button id="btn-username-ok" class="btn-primary">OK</button>
+      </div>
+    </div>
+
+    <!-- Game Over Screen -->
+    <div id="gameover-screen" class="screen hidden">
+      <h1 class="screen-title red">CRASH!</h1>
+      <div id="score-result">
+        <p class="result-label">PUNKTE</p>
+        <p id="final-score" class="result-value">0</p>
+      </div>
+      <div id="highscore-result">
+        <p class="result-label">REKORD</p>
+        <p id="final-highscore" class="result-value">0</p>
+      </div>
+      <p id="new-record-badge" class="new-record hidden">NEUER REKORD!</p>
+      <button id="btn-retry" class="btn-primary">NOCHMAL</button>
+    </div>
+
+    <!-- Pause Menü -->
+    <div id="pause-screen" class="screen hidden">
+      <h1 class="screen-title accent">PAUSE</h1>
+      <button id="btn-resume" class="btn-primary">WEITER</button>
+      <button id="btn-pause-menu" class="btn-primary">HAUPTMENÜ</button>
+    </div>
+
+    <!-- HUD -->
+    <div id="hud" class="hidden">
+      <button id="btn-pause" class="pause-btn" aria-label="Pause">❚❚</button>
+      <div id="hud-top">
+        <div id="hud-score">
+          <span id="score-value">0</span>
+        </div>
+        <div id="hud-highscore">
+          <span class="hud-label">BEST</span>
+          <span id="highscore-value">0</span>
+        </div>
+      </div>
+      <div id="hud-effects">
+        <span id="mega-badge" class="effect-badge mega hidden"><span class="badge-timer"></span><span class="badge-label">⭐ Vincent</span></span>
+        <span id="multiplier-badge" class="effect-badge hidden"><span class="badge-timer"><img class="badge-sprite" alt=""></span><span class="badge-label"></span></span>
+        <span id="star-badge" class="effect-badge star hidden"><span class="badge-timer"><img class="badge-sprite" alt=""></span><span class="badge-label">Diskokugel</span></span>
+        <span id="lipstick-badge" class="effect-badge lipstick hidden"><span class="badge-timer"><img class="badge-sprite" alt=""></span><span class="badge-label">Lippenstift</span></span>
+        <span id="micro-badge" class="effect-badge micro hidden"><span class="badge-timer"><img class="badge-sprite" alt=""></span><span class="badge-label">Mikrofon</span></span>
+        <span id="beer-badge" class="effect-badge beer hidden"><span class="badge-timer"><img class="badge-sprite" alt=""></span><span class="badge-label">Bier</span></span>
+        <span id="joint-badge" class="effect-badge joint hidden"><span class="badge-timer"><img class="badge-sprite" alt=""></span><span class="badge-label">Joint</span></span>
+      </div>
+    </div>
+
+    <!-- Meilenstein-Flash (Zahl leuchtet einmal kurz groß auf) -->
+    <div id="milestone-flash" class="milestone-flash hidden"></div>
+  </div>
+
+  <script type="module" src="firebase.js?v=32"></script>
+  <script type="module" src="audio.js?v=32"></script>
+  <script type="module" src="road.js?v=32"></script>
+  <script type="module" src="car.js?v=32"></script>
+  <script type="module" src="items.js?v=32"></script>
+  <script type="module" src="ui.js?v=32"></script>
+  <script type="module" src="game.js?v=32"></script>
+</body>
+</html>
